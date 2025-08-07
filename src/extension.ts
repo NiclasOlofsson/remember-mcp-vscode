@@ -2,6 +2,53 @@ import * as vscode from 'vscode';
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+
+const execAsync = promisify(exec);
+
+// Prerequisite checker for Python and pipx
+export class PrerequisiteChecker {
+    private static cachedResult: { python: boolean; pipx: boolean } | null = null;
+
+    static async checkPrerequisites(): Promise<{ python: boolean; pipx: boolean }> {
+        if (this.cachedResult) {
+            return this.cachedResult;
+        }
+
+        const results = { python: false, pipx: false };
+
+        try {
+            // Check Python
+            await execAsync('python --version');
+            results.python = true;
+        } catch {
+            try {
+                await execAsync('python3 --version');
+                results.python = true;
+            } catch {
+                // Python not found
+            }
+        }
+
+        try {
+            // Check pipx (only if python is available)
+            if (results.python) {
+                await execAsync('pipx --version');
+                results.pipx = true;
+            }
+        } catch {
+            // pipx not found
+        }
+
+        this.cachedResult = results;
+        return results;
+    }
+
+    static clearCache(): void {
+        this.cachedResult = null;
+    }
+}
 
 // Data layer for managing usage statistics
 export class UsageStatsManager {
@@ -303,10 +350,11 @@ export class RememberMcpManager {
 
 export class RememberMcpPanelProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'remember-mcp-panel';
+    private prerequisites: { python: boolean; pipx: boolean } | null = null;
 
     constructor(private readonly extensionUri: vscode.Uri, private rememberManager: RememberMcpManager) {}
 
-    public resolveWebviewView(
+    public async resolveWebviewView(
         webviewView: vscode.WebviewView,
         _context: vscode.WebviewViewResolveContext,
         _token: vscode.CancellationToken,
@@ -316,7 +364,9 @@ export class RememberMcpPanelProvider implements vscode.WebviewViewProvider {
             localResourceRoots: [this.extensionUri]
         };
 
-    webviewView.webview.html = this.getHtmlForWebview(webviewView.webview);
+        // Check prerequisites on startup
+        this.prerequisites = await PrerequisiteChecker.checkPrerequisites();
+        webviewView.webview.html = this.getHtmlForWebview(webviewView.webview);
 
         webviewView.webview.onDidReceiveMessage(async data => {
             switch (data.type) {
@@ -332,11 +382,219 @@ export class RememberMcpPanelProvider implements vscode.WebviewViewProvider {
                 case 'tailCopilotLog':
                     vscode.commands.executeCommand('remember-mcp.tailCopilotLog');
                     break;
+                case 'recheckPrerequisites':
+                    PrerequisiteChecker.clearCache();
+                    this.prerequisites = await PrerequisiteChecker.checkPrerequisites();
+                    webviewView.webview.html = this.getHtmlForWebview(webviewView.webview);
+                    break;
             }
         });
     }
 
     private getHtmlForWebview(webview: vscode.Webview) {
+        // Show prerequisite warning if Python or pipx are missing
+        if (!this.prerequisites?.python || !this.prerequisites?.pipx) {
+            return this.getPrerequisiteWarningHtml();
+        }
+
+        return this.getNormalControlHtml();
+    }
+
+    private getPrerequisiteWarningHtml() {
+        const missingPython = !this.prerequisites?.python;
+        const missingPipx = !this.prerequisites?.pipx;
+
+        return `<!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
+            <title>Prerequisites Required</title>
+            <style>
+                body {
+                    font-family: var(--vscode-font-family);
+                    font-size: var(--vscode-font-size);
+                    color: var(--vscode-foreground);
+                    background-color: var(--vscode-sideBar-background);
+                    margin: 0;
+                    padding: 20px;
+                    line-height: 1.4;
+                }
+                
+                h3 {
+                    margin: 0 0 16px 0;
+                    font-size: 14px;
+                    font-weight: 600;
+                    color: var(--vscode-sideBarTitle-foreground);
+                }
+                
+                .warning {
+                    background-color: var(--vscode-inputValidation-warningBackground);
+                    border: 1px solid var(--vscode-inputValidation-warningBorder);
+                    border-radius: 4px;
+                    padding: 12px;
+                    margin-bottom: 16px;
+                }
+                
+                .warning-title {
+                    font-weight: 600;
+                    color: var(--vscode-inputValidation-warningForeground);
+                    margin-bottom: 8px;
+                    display: flex;
+                    align-items: center;
+                }
+                
+                .warning-icon {
+                    margin-right: 6px;
+                }
+                
+                .missing-item {
+                    margin: 8px 0;
+                    color: var(--vscode-foreground);
+                    font-size: 12px;
+                }
+                
+                .missing-item strong {
+                    color: var(--vscode-errorForeground);
+                }
+                
+                .install-section {
+                    margin-top: 16px;
+                }
+                
+                .install-title {
+                    font-weight: 600;
+                    margin-bottom: 8px;
+                    color: var(--vscode-sideBarTitle-foreground);
+                }
+                
+                .install-step {
+                    margin: 8px 0;
+                    font-size: 12px;
+                    color: var(--vscode-foreground);
+                }
+                
+                .install-step-number {
+                    display: inline-block;
+                    width: 20px;
+                    height: 20px;
+                    background-color: var(--vscode-button-background);
+                    color: var(--vscode-button-foreground);
+                    border-radius: 50%;
+                    text-align: center;
+                    line-height: 20px;
+                    font-size: 11px;
+                    font-weight: 600;
+                    margin-right: 8px;
+                }
+                
+                .code {
+                    background-color: var(--vscode-textCodeBlock-background);
+                    border: 1px solid var(--vscode-widget-border);
+                    border-radius: 3px;
+                    padding: 4px 8px;
+                    font-family: var(--vscode-editor-font-family);
+                    font-size: 11px;
+                    margin: 4px 0;
+                    color: var(--vscode-textPreformat-foreground);
+                }
+                
+                .link {
+                    color: var(--vscode-textLink-foreground);
+                    text-decoration: none;
+                    font-size: 12px;
+                }
+                
+                .link:hover {
+                    color: var(--vscode-textLink-activeForeground);
+                    text-decoration: underline;
+                }
+                
+                button {
+                    width: 100%;
+                    padding: 6px 12px;
+                    margin-top: 16px;
+                    border: none;
+                    border-radius: 2px;
+                    font-size: 12px;
+                    cursor: pointer;
+                    font-family: var(--vscode-font-family);
+                    background-color: var(--vscode-button-background);
+                    color: var(--vscode-button-foreground);
+                }
+                
+                button:hover {
+                    background-color: var(--vscode-button-hoverBackground);
+                }
+            </style>
+        </head>
+        <body>
+            <h3>Setup Required</h3>
+            
+            <div class="warning">
+                <div class="warning-title">
+                    <span class="warning-icon">⚠️</span>
+                    Missing Prerequisites
+                </div>
+                ${missingPython ? '<div class="missing-item"><strong>Python</strong> is not installed or not in PATH</div>' : ''}
+                ${missingPipx ? '<div class="missing-item"><strong>pipx</strong> is not installed or not in PATH</div>' : ''}
+            </div>
+            
+            ${missingPython ? `
+            <div class="install-section">
+                <div class="install-title">Install Python</div>
+                <div class="install-step">
+                    <span class="install-step-number">1</span>
+                    Download Python from <a href="https://www.python.org/downloads/" class="link">python.org</a>
+                </div>
+                <div class="install-step">
+                    <span class="install-step-number">2</span>
+                    During installation, check "Add Python to PATH"
+                </div>
+                <div class="install-step">
+                    <span class="install-step-number">3</span>
+                    Restart VS Code after installation
+                </div>
+            </div>
+            ` : ''}
+            
+            ${!missingPython && missingPipx ? `
+            <div class="install-section">
+                <div class="install-title">Install pipx</div>
+                <div class="install-step">
+                    <span class="install-step-number">1</span>
+                    Open a terminal and run:
+                    <div class="code">python -m pip install --user pipx</div>
+                </div>
+                <div class="install-step">
+                    <span class="install-step-number">2</span>
+                    Add pipx to PATH:
+                    <div class="code">python -m pipx ensurepath</div>
+                </div>
+                <div class="install-step">
+                    <span class="install-step-number">3</span>
+                    Restart VS Code
+                </div>
+            </div>
+            ` : ''}
+            
+            <button onclick="sendMessage('recheckPrerequisites')">Check Again</button>
+            
+            <script>
+                const vscode = acquireVsCodeApi();
+                
+                function sendMessage(type) {
+                    vscode.postMessage({
+                        type: type
+                    });
+                }
+            </script>
+        </body>
+        </html>`;
+    }
+
+    private getNormalControlHtml() {
         return `<!DOCTYPE html>
         <html lang="en">
         <head>
@@ -616,6 +874,28 @@ export class RememberMcpUsagePanelProvider implements vscode.WebviewViewProvider
 // Extension activation function
 export function activate(context: vscode.ExtensionContext) {
     console.log('Remember MCP extension is now active!');
+
+    // Check prerequisites on startup
+    PrerequisiteChecker.checkPrerequisites().then(prerequisites => {
+        if (!prerequisites.python || !prerequisites.pipx) {
+            const missing = [];
+            if (!prerequisites.python) {
+                missing.push('Python');
+            }
+            if (!prerequisites.pipx) {
+                missing.push('pipx');
+            }
+            
+            vscode.window.showWarningMessage(
+                `Remember MCP requires ${missing.join(' and ')} to be installed. Check the Server Control panel for installation instructions.`,
+                'Show Panel'
+            ).then(choice => {
+                if (choice === 'Show Panel') {
+                    vscode.commands.executeCommand('workbench.view.extension.remember-mcp-container');
+                }
+            });
+        }
+    });
 
     // Create Remember MCP manager
     const rememberManager = new RememberMcpManager();
