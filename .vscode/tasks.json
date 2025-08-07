@@ -1,0 +1,73 @@
+// See https://go.microsoft.com/fwlink/?LinkId=733558
+// for the documentation about the tasks.json format
+{
+	"version": "2.0.0",
+	"options": {
+		"shell": {
+			"executable": "cmd.exe",
+			"args": ["/c"]
+		}
+	},
+	"tasks": [
+		{
+			"label": "npm watch",
+			"type": "shell",
+			"command": "npm",
+			"args": ["run", "watch"],
+			"problemMatcher": "$ts-webpack-watch",
+			"isBackground": true,
+			"presentation": {
+				"reveal": "never",
+				"group": "watchers"
+			},
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			}
+		},
+		{
+			"label": "npm watch-tests",
+			"type": "shell",
+			"command": "npm",
+			"args": ["run", "watch-tests"],
+			"problemMatcher": "$tsc-watch",
+			"isBackground": true,
+			"presentation": {
+				"reveal": "never",
+				"group": "watchers"
+			},
+			"group": "build"
+		},
+		{
+			"label": "npm compile",
+			"type": "shell",
+			"command": "npm",
+			"args": ["run", "compile"],
+			"group": "build",
+			"problemMatcher": "$ts-webpack"
+		},
+		{
+			"label": "npm test",
+			"type": "shell",
+			"command": "npm",
+			"args": ["run", "test"],
+			"group": "test",
+			"problemMatcher": "$ts-webpack"
+		},
+		{
+			"label": "npm lint",
+			"type": "shell",
+			"command": "npm",
+			"args": ["run", "lint"],
+			"group": "build"
+		},
+		{
+			"label": "tasks: watch-tests",
+			"dependsOn": [
+				"npm watch",
+				"npm watch-tests"
+			],
+			"problemMatcher": []
+		}
+	]
+}
