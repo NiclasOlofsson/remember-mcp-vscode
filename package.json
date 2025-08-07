@@ -80,12 +80,6 @@
           "icon": "$(graph)"
         },
         {
-          "id": "remember-mcp-explorer",
-          "name": "MCP Server Status",
-          "when": "remember-mcp:enabled",
-          "icon": "$(server)"
-        },
-        {
           "type": "webview",
           "id": "remember-mcp-panel",
           "name": "Server Control",
