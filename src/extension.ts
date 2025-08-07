@@ -3,25 +3,50 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 
-export class McpServerManager {
+// Data layer for managing usage statistics
+export class UsageStatsManager {
+    private usageStats: Map<string, number> = new Map();
+    private _onDidChangeStats: vscode.EventEmitter<void> = new vscode.EventEmitter<void>();
+    readonly onDidChangeStats: vscode.Event<void> = this._onDidChangeStats.event;
+
+    recordUsage(modelName: string): void {
+        const currentCount = this.usageStats.get(modelName) || 0;
+        this.usageStats.set(modelName, currentCount + 1);
+        this._onDidChangeStats.fire();
+    }
+
+    getStats(): Map<string, number> {
+        return new Map(this.usageStats);
+    }
+
+    clearStats(): void {
+        this.usageStats.clear();
+        this._onDidChangeStats.fire();
+    }
+
+    dispose(): void {
+        this._onDidChangeStats.dispose();
+    }
+}
+
+export class RememberMcpManager {
     private outputChannel: vscode.OutputChannel;
     private statusBarItem: vscode.StatusBarItem;
     private mcpProvider: vscode.Disposable | null = null;
-    private _onDidChangeTreeData: vscode.EventEmitter<void> = new vscode.EventEmitter<void>();
-    readonly onDidChangeTreeData: vscode.Event<void> = this._onDidChangeTreeData.event;
-    private modelUsageStats: Map<string, number> = new Map();
+    public readonly usageStatsManager: UsageStatsManager;
     
     constructor() {
         this.outputChannel = vscode.window.createOutputChannel('Remember MCP');
         this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
         this.statusBarItem.command = 'remember-mcp.showPanel';
+        this.usageStatsManager = new UsageStatsManager();
         this.updateStatusBar('stopped');
         this.statusBarItem.show();
     }
 
     /**
      * Utility: Get the Copilot Chat extension's log file path by navigating from our globalStoragePath.
-     * @param myStoragePath Your extension's globalStoragePath
+     * @param myLogDir Your extension's globalStoragePath
      * @returns Copilot Chat log file path (if found), else null
      */
     static getCopilotChatLogPath(myLogDir: string, outputChannel?: vscode.OutputChannel): string | null {
@@ -57,7 +82,7 @@ export class McpServerManager {
 
     /**
      * Utility: Tail a file and call a callback with new lines as they are appended.
-     * Uses dual watchers: fs.watch for fast events + fs.watchFile for reliable polling fallback.
+     * Uses polling-based file watching for reliable cross-platform operation.
      * @param filePath Path to the log file
      * @param onLine Callback for each new line
      * @param pollingInterval Polling interval in milliseconds (default: 1000ms)
@@ -134,9 +159,7 @@ export class McpServerManager {
      * @param modelName Name of the model used
      */
     recordModelUsage(modelName: string): void {
-        const currentCount = this.modelUsageStats.get(modelName) || 0;
-        this.modelUsageStats.set(modelName, currentCount + 1);
-        this._onDidChangeTreeData.fire(); // Refresh the tree view
+        this.usageStatsManager.recordUsage(modelName);
     }
 
     /**
@@ -144,15 +167,14 @@ export class McpServerManager {
      * @returns Map of model names to usage counts
      */
     getModelUsageStats(): Map<string, number> {
-        return new Map(this.modelUsageStats);
+        return this.usageStatsManager.getStats();
     }
 
     /**
      * Clear all model usage statistics
      */
     clearModelUsageStats(): void {
-        this.modelUsageStats.clear();
-        this._onDidChangeTreeData.fire();
+        this.usageStatsManager.clearStats();
     }
 
     private updateStatusBar(status: 'running' | 'stopped' | 'error') {
@@ -173,7 +195,6 @@ export class McpServerManager {
                 vscode.commands.executeCommand('setContext', 'remember-mcp:enabled', false);
                 break;
         }
-        this._onDidChangeTreeData.fire();
     }
 
     async startServer(): Promise<void> {
@@ -277,187 +298,17 @@ export class McpServerManager {
         this.stopServer();
         this.outputChannel.dispose();
         this.statusBarItem.dispose();
-        this._onDidChangeTreeData.dispose();
     }
 }
 
-export class McpTreeDataProvider implements vscode.TreeDataProvider<McpTreeItem> {
-    readonly onDidChangeTreeData: vscode.Event<McpTreeItem | undefined | null | void>;
-
-    constructor(private serverManager: McpServerManager) {
-        this.onDidChangeTreeData = serverManager.onDidChangeTreeData;
-    }
-
-    refresh(): void {
-        // Tree will refresh automatically via the server manager's event emitter
-    }
-
-    getTreeItem(element: McpTreeItem): vscode.TreeItem {
-        console.log(`getTreeItem called with element:`, { 
-            label: element.label, 
-            description: element.description,
-            toString: element.toString(),
-            constructor: element.constructor.name
-        });
-        return element;
-    }
-
-    getChildren(element?: McpTreeItem): Thenable<McpTreeItem[]> {
-        console.log(`getChildren called with element:`, element ? { label: element.label, toString: element.toString() } : 'undefined');
-        
-        if (!element) {
-            // Root items
-            const serverStatus = this.serverManager.isRunning() ? 'Registered with VS Code' : 'Not Registered';
-            console.log('Creating root tree items, serverStatus:', serverStatus);
-            
-            const statusItem = new McpTreeItem(
-                'Server Status',
-                serverStatus,
-                vscode.TreeItemCollapsibleState.None,
-                this.serverManager.isRunning() ? 'statusBarItem.activeBackground' : 'statusBarItem.warningBackground'
-            );
-            console.log('Created statusItem with label:', statusItem.label);
-            
-            const actionsItem = new McpTreeItem(
-                'Actions',
-                'Available actions',
-                vscode.TreeItemCollapsibleState.Expanded
-            );
-            console.log('Created actionsItem with label:', actionsItem.label);
-            
-            const usageStats = this.serverManager.getModelUsageStats();
-            const totalRequests = Array.from(usageStats.values()).reduce((sum, count) => sum + count, 0);
-            const usageItem = new McpTreeItem(
-                'Copilot Usage',
-                `${totalRequests} total requests`,
-                vscode.TreeItemCollapsibleState.Collapsed
-            );
-            console.log('Created usageItem with label:', usageItem.label);
-            
-            return Promise.resolve([statusItem, actionsItem, usageItem]);
-        } else if (element.label === 'Actions') {
-            console.log('Creating action tree items for Actions element');
-            const actionLabel = this.serverManager.isRunning() ? 'Unregister Server' : 'Register Server';
-            const actionDescription = this.serverManager.isRunning() ? 'Remove from VS Code MCP' : 'Add to VS Code MCP';
-            const actionCommand = this.serverManager.isRunning() ? 'remember-mcp.stopServer' : 'remember-mcp.startServer';
-            
-            console.log('Action details:', { actionLabel, actionDescription, actionCommand });
-            
-            const actionItem = new McpTreeItem(
-                actionLabel,
-                actionDescription,
-                vscode.TreeItemCollapsibleState.None,
-                undefined,
-                actionCommand
-            );
-            console.log('Created actionItem with label:', actionItem.label);
-            
-            const restartItem = new McpTreeItem(
-                'Restart Registration',
-                'Re-register with VS Code',
-                vscode.TreeItemCollapsibleState.None,
-                undefined,
-                'remember-mcp.restartServer'
-            );
-            console.log('Created restartItem with label:', restartItem.label);
-            
-            const outputItem = new McpTreeItem(
-                'Show Output',
-                'View extension logs',
-                vscode.TreeItemCollapsibleState.None,
-                undefined,
-                'remember-mcp.showOutput'
-            );
-            console.log('Created outputItem with label:', outputItem.label);
-            
-            return Promise.resolve([actionItem, restartItem, outputItem]);
-        } else if (element.label === 'Copilot Usage') {
-            console.log('Creating usage tree items for Copilot Usage element');
-            const usageStats = this.serverManager.getModelUsageStats();
-            const usageItems: McpTreeItem[] = [];
-            
-            if (usageStats.size === 0) {
-                const noDataItem = new McpTreeItem(
-                    'No usage data',
-                    'Start log tailing to track usage',
-                    vscode.TreeItemCollapsibleState.None
-                );
-                usageItems.push(noDataItem);
-            } else {
-                // Sort by usage count (descending)
-                const sortedStats = Array.from(usageStats.entries()).sort((a, b) => b[1] - a[1]);
-                
-                for (const [model, count] of sortedStats) {
-                    const usageItem = new McpTreeItem(
-                        model,
-                        `${count} requests`,
-                        vscode.TreeItemCollapsibleState.None
-                    );
-                    usageItems.push(usageItem);
-                }
-                
-                // Add clear action
-                const clearItem = new McpTreeItem(
-                    'Clear Statistics',
-                    'Reset all usage counters',
-                    vscode.TreeItemCollapsibleState.None,
-                    undefined,
-                    'remember-mcp.clearUsageStats'
-                );
-                usageItems.push(clearItem);
-            }
-            
-            return Promise.resolve(usageItems);
-        }
-        console.log('No matching element, returning empty array');
-        return Promise.resolve([]);
-    }
-}
-
-export class McpTreeItem extends vscode.TreeItem {
-    public readonly label: string;
-    
-    constructor(
-        label: string,
-        public readonly description: string,
-        public readonly collapsibleState: vscode.TreeItemCollapsibleState,
-        public readonly color?: string,
-        public readonly commandId?: string
-    ) {
-        // Validate and ensure label is never empty before calling super
-        const validatedLabel = (label && typeof label === 'string' && label.trim()) ? label.trim() : 'Unknown Item';
-        
-        // Call parent constructor with validated label
-        super(validatedLabel, collapsibleState);
-        
-        // Set our readonly label property
-        this.label = validatedLabel;
-        
-        // Set other properties
-        this.description = description || '';
-        this.tooltip = `${validatedLabel}: ${this.description}`;
-        
-        if (commandId) {
-            this.command = {
-                command: commandId,
-                title: validatedLabel
-            };
-        }
-        
-        if (color) {
-            this.iconPath = new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor(color));
-        }
-    }
-}
-
-export class McpPanelProvider implements vscode.WebviewViewProvider {
+export class RememberMcpPanelProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'remember-mcp-panel';
 
-    constructor(private readonly extensionUri: vscode.Uri, private serverManager: McpServerManager) {}
+    constructor(private readonly extensionUri: vscode.Uri, private rememberManager: RememberMcpManager) {}
 
     public resolveWebviewView(
         webviewView: vscode.WebviewView,
-        context: vscode.WebviewViewResolveContext,
+        _context: vscode.WebviewViewResolveContext,
         _token: vscode.CancellationToken,
     ) {
         webviewView.webview.options = {
@@ -470,13 +321,13 @@ export class McpPanelProvider implements vscode.WebviewViewProvider {
         webviewView.webview.onDidReceiveMessage(async data => {
             switch (data.type) {
                 case 'start':
-                    await this.serverManager.startServer();
+                    await this.rememberManager.startServer();
                     break;
                 case 'stop':
-                    this.serverManager.stopServer();
+                    this.rememberManager.stopServer();
                     break;
                 case 'restart':
-                    this.serverManager.restartServer();
+                    this.rememberManager.restartServer();
                     break;
                 case 'tailCopilotLog':
                     vscode.commands.executeCommand('remember-mcp.tailCopilotLog');
@@ -573,14 +424,14 @@ export class McpPanelProvider implements vscode.WebviewViewProvider {
     }
 }
 
-export class CopilotUsagePanelProvider implements vscode.WebviewViewProvider {
+export class RememberMcpUsagePanelProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'remember-mcp-usage-panel';
 
-    constructor(private readonly extensionUri: vscode.Uri, private serverManager: McpServerManager) {}
+    constructor(private readonly extensionUri: vscode.Uri, private rememberManager: RememberMcpManager) {}
 
     public resolveWebviewView(
         webviewView: vscode.WebviewView,
-        context: vscode.WebviewViewResolveContext,
+        _context: vscode.WebviewViewResolveContext,
         _token: vscode.CancellationToken,
     ) {
         webviewView.webview.options = {
@@ -590,15 +441,15 @@ export class CopilotUsagePanelProvider implements vscode.WebviewViewProvider {
 
         webviewView.webview.html = this.getHtmlForWebview(webviewView.webview);
 
-        // Listen for tree data changes to update the webview
-        this.serverManager.onDidChangeTreeData(() => {
+        // Listen for usage stats changes to update the webview
+        this.rememberManager.usageStatsManager.onDidChangeStats(() => {
             webviewView.webview.html = this.getHtmlForWebview(webviewView.webview);
         });
 
         webviewView.webview.onDidReceiveMessage(async data => {
             switch (data.type) {
                 case 'clearStats':
-                    this.serverManager.clearModelUsageStats();
+                    this.rememberManager.clearModelUsageStats();
                     vscode.window.showInformationMessage('Model usage statistics cleared.');
                     break;
                 case 'refresh':
@@ -609,9 +460,9 @@ export class CopilotUsagePanelProvider implements vscode.WebviewViewProvider {
     }
 
     private getHtmlForWebview(webview: vscode.Webview) {
-        const usageStats = this.serverManager.getModelUsageStats();
-        const totalRequests = Array.from(usageStats.values()).reduce((sum, count) => sum + count, 0);
-        const sortedStats = Array.from(usageStats.entries()).sort((a, b) => b[1] - a[1]);
+        const usageStats = this.rememberManager.getModelUsageStats();
+        const totalRequests = Array.from(usageStats.values()).reduce((sum: number, count: number) => sum + count, 0);
+        const sortedStats = Array.from(usageStats.entries()).sort((a: [string, number], b: [string, number]) => b[1] - a[1]);
 
         let tableRows = '';
         if (sortedStats.length === 0) {
@@ -766,47 +617,32 @@ export class CopilotUsagePanelProvider implements vscode.WebviewViewProvider {
 export function activate(context: vscode.ExtensionContext) {
     console.log('Remember MCP extension is now active!');
 
-    // Create server manager
-    const serverManager = new McpServerManager();
+    // Create Remember MCP manager
+    const rememberManager = new RememberMcpManager();
 
-    
     // Register Copilot Usage panel provider
-    const usagePanelProvider = new CopilotUsagePanelProvider(context.extensionUri, serverManager);
+    const usagePanelProvider = new RememberMcpUsagePanelProvider(context.extensionUri, rememberManager);
     context.subscriptions.push(
-        vscode.window.registerWebviewViewProvider(CopilotUsagePanelProvider.viewType, usagePanelProvider)
+        vscode.window.registerWebviewViewProvider(RememberMcpUsagePanelProvider.viewType, usagePanelProvider)
     );
 
-    // Create tree data provider
-    const treeDataProvider = new McpTreeDataProvider(serverManager);
-    const treeView = vscode.window.createTreeView('remember-mcp-explorer', {
-        treeDataProvider: treeDataProvider,
-        showCollapseAll: true
-    });
-    
-    // Force the tree view to reveal and refresh
-    setTimeout(() => {
-        treeDataProvider.refresh();
-        // Just try to make the tree view visible without revealing a specific element
-        vscode.commands.executeCommand('workbench.view.extension.remember-mcp-container');
-    }, 1000);
-
     // Register webview panel provider
-    const panelProvider = new McpPanelProvider(context.extensionUri, serverManager);
+    const panelProvider = new RememberMcpPanelProvider(context.extensionUri, rememberManager);
     context.subscriptions.push(
-        vscode.window.registerWebviewViewProvider(McpPanelProvider.viewType, panelProvider)
+        vscode.window.registerWebviewViewProvider(RememberMcpPanelProvider.viewType, panelProvider)
     );
 
     // Register commands
     const startCommand = vscode.commands.registerCommand('remember-mcp.startServer', async () => {
-        await serverManager.startServer();
+        await rememberManager.startServer();
     });
 
     const stopCommand = vscode.commands.registerCommand('remember-mcp.stopServer', () => {
-        serverManager.stopServer();
+        rememberManager.stopServer();
     });
 
     const restartCommand = vscode.commands.registerCommand('remember-mcp.restartServer', async () => {
-        await serverManager.restartServer();
+        await rememberManager.restartServer();
     });
 
     const showPanelCommand = vscode.commands.registerCommand('remember-mcp.showPanel', () => {
@@ -814,17 +650,17 @@ export function activate(context: vscode.ExtensionContext) {
     });
 
     const showOutputCommand = vscode.commands.registerCommand('remember-mcp.showOutput', () => {
-        serverManager['outputChannel'].show();
+        rememberManager['outputChannel'].show();
     });
 
     const clearUsageStatsCommand = vscode.commands.registerCommand('remember-mcp.clearUsageStats', () => {
-        serverManager.clearModelUsageStats();
+        rememberManager.clearModelUsageStats();
         vscode.window.showInformationMessage('Model usage statistics cleared.');
     });
 
     // Add all disposables
     context.subscriptions.push(
-        serverManager,
+        rememberManager,
         startCommand,
         stopCommand,
         restartCommand,
@@ -833,67 +669,93 @@ export function activate(context: vscode.ExtensionContext) {
         clearUsageStatsCommand
     );
 
-    // Auto-start server if configured
+    // Auto-start MCP server if configured
     const config = vscode.workspace.getConfiguration('remember-mcp');
     if (config.get<boolean>('server.autoStart', true)) {
         setTimeout(async () => {
-            await serverManager.startServer();
+            await rememberManager.startServer();
         }, 2000); // Delay to ensure VS Code is fully loaded
     }
 
-    // Track the current Copilot Chat log tail disposable
+    // Track the current Copilot Chat log tail disposable and poller globally in the extension
     let currentCopilotTail: vscode.Disposable | null = null;
     let copilotTailOutput: vscode.OutputChannel | null = null;
+    let copilotTailPoller: NodeJS.Timeout | null = null;
+
+    // Read polling interval from settings (default 10000 ms)
+    function getTailPollInterval(): number {
+        const config = vscode.workspace.getConfiguration('remember-mcp');
+        const interval = config.get<number>('tail.pollInterval', 10000);
+        // Clamp to minimum 1000 ms for safety
+        return Math.max(1000, interval);
+    }
 
     // Filter for Copilot model summary lines
     function isModelSummaryLine(line: string): boolean {
         return /\[info\] ccreq:.*copilotmd \| success \| .+ \| \d+ms \|/.test(line);
     }
 
+    // Shared function to start tailing or polling for the log file
+    function startCopilotLogTail() {
+        if (currentCopilotTail || copilotTailPoller) {
+            // Already running
+            return;
+        }
+        const myLogDir = context.logUri.fsPath;
+        const outputChannel = rememberManager['outputChannel'] as vscode.OutputChannel;
+        let logPath = RememberMcpManager.getCopilotChatLogPath(myLogDir, outputChannel);
+        copilotTailOutput = vscode.window.createOutputChannel('Remember MCP Copilot Log');
+        copilotTailOutput.show();
+
+        function startTailing(pathToLog: string) {
+            vscode.window.showInformationMessage('Tailing Copilot Chat log: ' + pathToLog);
+            currentCopilotTail = RememberMcpManager.tailFile(pathToLog, line => {
+                if (copilotTailOutput && isModelSummaryLine(line)) {
+                    copilotTailOutput.appendLine(line);
+                    // Track model usage
+                    const modelName = RememberMcpManager.extractModelFromLogLine(line);
+                    if (modelName) {
+                        rememberManager.recordModelUsage(modelName);
+                    }
+                }
+            });
+        }
+
+        const pollInterval = getTailPollInterval();
+        if (logPath) {
+            startTailing(logPath);
+        } else {
+            vscode.window.showWarningMessage(`Copilot Chat log file not found. Will poll every ${pollInterval / 1000} seconds until it appears.`);
+            copilotTailPoller = setInterval(() => {
+                logPath = RememberMcpManager.getCopilotChatLogPath(myLogDir, outputChannel);
+                if (logPath) {
+                    if (copilotTailPoller) {
+                        clearInterval(copilotTailPoller);
+                        copilotTailPoller = null;
+                    }
+                    startTailing(logPath);
+                }
+            }, pollInterval);
+        }
+    }
+
+    // Manual command to start tailing
     const tailCopilotLogCmd = vscode.commands.registerCommand('remember-mcp.tailCopilotLog', () => {
-        if (currentCopilotTail) {
-            vscode.window.showWarningMessage('Copilot Chat log is already being tailed. Stop the current tail before starting a new one.');
+        if (currentCopilotTail || copilotTailPoller) {
+            vscode.window.showWarningMessage('Copilot Chat log is already being tailed or polling. Stop the current tail before starting a new one.');
             if (copilotTailOutput) {
                 copilotTailOutput.show();
             }
             return;
         }
-        const myLogDir = context.logUri.fsPath;
-        const outputChannel = serverManager['outputChannel'] as vscode.OutputChannel;
-        const logPath = McpServerManager.getCopilotChatLogPath(myLogDir, outputChannel);
-        if (!logPath) {
-            vscode.window.showErrorMessage('Copilot Chat log file not found.');
-            return;
-        }
-        vscode.window.showInformationMessage('Tailing Copilot Chat log: ' + logPath);
-        copilotTailOutput = vscode.window.createOutputChannel('Remember MCP Copilot Log');
-        copilotTailOutput.show();
-        currentCopilotTail = McpServerManager.tailFile(logPath, line => {
-            if (copilotTailOutput && isModelSummaryLine(line)) {
-                copilotTailOutput.appendLine(line);
-                // Track model usage
-                const modelName = McpServerManager.extractModelFromLogLine(line);
-                if (modelName) {
-                    serverManager.recordModelUsage(modelName);
-                }
-            }
-        });
-        context.subscriptions.push({
-            dispose: () => {
-                if (currentCopilotTail) {
-                    currentCopilotTail.dispose();
-                }
-                currentCopilotTail = null;
-                if (copilotTailOutput) {
-                    copilotTailOutput.dispose();
-                    copilotTailOutput = null;
-                }
-            }
-        });
+        startCopilotLogTail();
     });
     context.subscriptions.push(tailCopilotLogCmd);
 
-    // Dispose the tail on deactivate
+    // Automatically start tailing on extension activation
+    startCopilotLogTail();
+
+    // Dispose the tail and poller on deactivate
     context.subscriptions.push({
         dispose: () => {
             if (currentCopilotTail) {
@@ -903,6 +765,10 @@ export function activate(context: vscode.ExtensionContext) {
             if (copilotTailOutput) {
                 copilotTailOutput.dispose();
                 copilotTailOutput = null;
+            }
+            if (copilotTailPoller) {
+                clearInterval(copilotTailPoller);
+                copilotTailPoller = null;
             }
         }
     });
