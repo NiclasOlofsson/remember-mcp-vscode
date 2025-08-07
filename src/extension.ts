@@ -317,17 +317,17 @@ export class RememberMcpManager {
     private updateStatusBar(status: 'running' | 'stopped' | 'error') {
         switch (status) {
             case 'running':
-                this.statusBarItem.text = '$(server) MCP Running';
+                this.statusBarItem.text = '$(server) Remember MCP Running';
                 this.statusBarItem.backgroundColor = undefined;
                 vscode.commands.executeCommand('setContext', 'remember-mcp:enabled', true);
                 break;
             case 'stopped':
-                this.statusBarItem.text = '$(server) MCP Stopped';
+                this.statusBarItem.text = '$(server) Remember MCP Stopped';
                 this.statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
                 vscode.commands.executeCommand('setContext', 'remember-mcp:enabled', false);
                 break;
             case 'error':
-                this.statusBarItem.text = '$(error) MCP Error';
+                this.statusBarItem.text = '$(error) Remember MCP Error';
                 this.statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
                 vscode.commands.executeCommand('setContext', 'remember-mcp:enabled', false);
                 break;
@@ -336,7 +336,7 @@ export class RememberMcpManager {
 
     async startServer(): Promise<void> {
         if (this.mcpProvider) {
-            this.outputChannel.appendLine('MCP server is already running');
+            this.outputChannel.appendLine('Remember MCP Server is already running');
             return;
         }
 
@@ -350,12 +350,12 @@ export class RememberMcpManager {
         
         if (mcpEnabled === false) {
             this.outputChannel.appendLine('WARNING: MCP is disabled in VS Code settings');
-            vscode.window.showWarningMessage('MCP is disabled in VS Code settings. Enable "chat.mcp.enabled" to use MCP servers.');
+            vscode.window.showWarningMessage('MCP is disabled in VS Code settings. Enable "chat.mcp.enabled" to use the Remember MCP Server.');
             this.updateStatusBar('error');
             return;
         }
         
-        this.outputChannel.appendLine(`Registering MCP server with command: ${serverCommand}`);
+        this.outputChannel.appendLine(`Registering Remember MCP Server with command: ${serverCommand}`);
         this.outputChannel.show();
 
         try {
@@ -386,8 +386,8 @@ export class RememberMcpManager {
             });
 
             this.updateStatusBar('running');
-            this.outputChannel.appendLine('MCP server provider registered successfully');
-            vscode.window.showInformationMessage('MCP Server registered with VS Code');
+            this.outputChannel.appendLine('Remember MCP Server provider registered successfully');
+            vscode.window.showInformationMessage('Remember MCP Server registered with VS Code');
 
             // Check for available tools after a short delay
             setTimeout(() => {
@@ -401,24 +401,24 @@ export class RememberMcpManager {
             }, 3000);
 
         } catch (error) {
-            this.outputChannel.appendLine(`Failed to register MCP server: ${error}`);
+            this.outputChannel.appendLine(`Failed to register Remember MCP Server: ${error}`);
             this.updateStatusBar('error');
-            vscode.window.showErrorMessage(`Failed to register MCP server: ${error}`);
+            vscode.window.showErrorMessage(`Failed to register Remember MCP Server: ${error}`);
         }
     }
 
     stopServer(): void {
         if (!this.mcpProvider) {
-            this.outputChannel.appendLine('MCP server provider is not registered');
+            this.outputChannel.appendLine('Remember MCP Server provider is not registered');
             return;
         }
 
-        this.outputChannel.appendLine('Unregistering MCP server provider...');
+        this.outputChannel.appendLine('Unregistering Remember MCP Server provider...');
         this.mcpProvider.dispose();
         this.mcpProvider = null;
         this.updateStatusBar('stopped');
-        this.outputChannel.appendLine('MCP server provider unregistered');
-        vscode.window.showInformationMessage('MCP Server unregistered');
+        this.outputChannel.appendLine('Remember MCP Server provider unregistered');
+        vscode.window.showInformationMessage('Remember MCP Server unregistered');
     }
 
     async restartServer(): Promise<void> {
@@ -1301,7 +1301,8 @@ export function activate(context: vscode.ExtensionContext) {
         copilotTailOutput.show();
 
         function startTailing(pathToLog: string) {
-            vscode.window.showInformationMessage('Tailing Copilot Chat log: ' + pathToLog);
+            // Log to output channel instead of showing notification
+            outputChannel.appendLine(`Starting to tail Copilot Chat log: ${pathToLog}`);
             currentCopilotTail = RememberMcpManager.tailFile(pathToLog, line => {
                 if (copilotTailOutput && isModelSummaryLine(line)) {
                     copilotTailOutput.appendLine(line);
@@ -1318,7 +1319,8 @@ export function activate(context: vscode.ExtensionContext) {
         if (logPath) {
             startTailing(logPath);
         } else {
-            vscode.window.showWarningMessage(`Copilot Chat log file not found. Will poll every ${pollInterval / 1000} seconds until it appears.`);
+            // Log to output channel instead of showing warning notification
+            outputChannel.appendLine(`Copilot Chat log file not found. Will poll every ${pollInterval / 1000} seconds until it appears.`);
             copilotTailPoller = setInterval(() => {
                 logPath = RememberMcpManager.getCopilotChatLogPath(myLogDir, outputChannel);
                 if (logPath) {
@@ -1335,7 +1337,9 @@ export function activate(context: vscode.ExtensionContext) {
     // Manual command to start tailing
     const tailCopilotLogCmd = vscode.commands.registerCommand('remember-mcp.tailCopilotLog', () => {
         if (currentCopilotTail || copilotTailPoller) {
-            vscode.window.showWarningMessage('Copilot Chat log is already being tailed or polling. Stop the current tail before starting a new one.');
+            // Log to output channel instead of showing warning notification
+            const outputChannel = rememberManager['outputChannel'] as vscode.OutputChannel;
+            outputChannel.appendLine('Copilot Chat log is already being tailed or polling. Stop the current tail before starting a new one.');
             if (copilotTailOutput) {
                 copilotTailOutput.show();
             }

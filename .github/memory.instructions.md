@@ -47,6 +47,13 @@ This project creates a VS Code extension that provides a visual interface for ru
 - Package the extension with `vsce package` when ready for distribution
 - Publish to VS Code marketplace when stable
 
+## Development Laws & Workflow
+
+**Law 14:** Always check webpack watcher task status before running manual compile/lint/test operations.
+- First, verify that the webpack watcher (`npm watch`) is running and healthy
+- Only proceed with linting if webpack is running without problems
+- This ensures build consistency and avoids redundant compilation steps
+
 ## Server Configuration
 The extension uses the exact command from .vscode/mcp.json:
 ```
