@@ -3,7 +3,7 @@
   "icon": "media/remember-new-logo-letter-black-128.png",
   "displayName": "Remember MCP",
   "description": "A VS Code extension that registers MCP servers with VS Code's built-in MCP system",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "readme": "README_marketplace.md",
   "publisher": "nickeolofsson",
   "repository": {
@@ -126,18 +126,18 @@
     }
   },
   "scripts": {
-  "vscode:prepublish": "npm run package",
-  "compile": "webpack",
-  "watch": "webpack --watch",
-  "package": "webpack --mode production --devtool hidden-source-map",
-  "compile-tests": "tsc -p . --outDir out",
-  "watch-tests": "tsc -p . -w --outDir out",
-  "pretest": "npm run compile-tests && npm run compile && npm run lint",
-  "lint": "eslint src",
-  "test": "vscode-test",
-  "bump-version": "npm version patch",
-  "package:marketplace": "npm run bump-version && vsce package --readme README_marketplace.md",
-  "publish:marketplace": "npm run package:marketplace && vsce publish --readme README_marketplace.md"
+    "vscode:prepublish": "npm run package",
+    "compile": "webpack",
+    "watch": "webpack --watch",
+    "package": "webpack --mode production --devtool hidden-source-map",
+    "compile-tests": "tsc -p . --outDir out",
+    "watch-tests": "tsc -p . -w --outDir out",
+    "pretest": "npm run compile-tests && npm run compile && npm run lint",
+    "lint": "eslint src",
+    "test": "vscode-test",
+    "bump-version": "npm version patch",
+    "package:marketplace": "npm run bump-version && vsce package --readme README_marketplace.md",
+    "publish:marketplace": "npm run package:marketplace && vsce publish --readme README_marketplace.md"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",
