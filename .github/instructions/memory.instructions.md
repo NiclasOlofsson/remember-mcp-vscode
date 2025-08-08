@@ -29,35 +29,9 @@ This project creates a VS Code extension that provides a visual interface for ru
 - ✅ Auto-start configuration
 - ✅ Command palette integration
 
-## Completed Setup
-```markdown
-- [x] Verify that the memory.instructions.md file in the .github directory is created.
-- [x] Clarify Project Requirements
-- [x] Scaffold the Project  
-- [x] Customize the Project
-- [x] Install Required Extensions
-- [x] Compile the Project
-- [x] Create and Run Task
-- [x] Launch the Project
-- [x] Ensure Documentation is Complete
-```
-
-## Next Steps
-- Test the extension by pressing F5 to launch Extension Development Host
-- Package the extension with `vsce package` when ready for distribution
-- Publish to VS Code marketplace when stable
-
 ## Development Laws & Workflow
 
 **Law 14:** Always check webpack watcher task status before running manual compile/lint/test operations.
 - First, verify that the webpack watcher (`npm watch`) is running and healthy
 - Only proceed with linting if webpack is running without problems
 - This ensures build consistency and avoids redundant compilation steps
-
-## Server Configuration
-The extension uses the exact command from .vscode/mcp.json:
-```
-pipx run --no-cache --system-site-packages --spec git+https://github.com/NiclasOlofsson/mode-manager-mcp.git mode-manager-mcp
-```
-- **2025-08-08 05:21:** For this workspace, we want to stay in VS Code for all development and workflows.
-- **2025-08-08 05:21:** For this workspace, we want to stay in VS Code for all development and workflows, and then play some.

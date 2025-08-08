@@ -1,5 +1,6 @@
 {
   "name": "remember-mcp-vscode",
+  "icon": "media/remember-mcp-logo-black-to-png.png",
   "displayName": "Remember MCP",
   "description": "A VS Code extension that registers MCP servers with VS Code's built-in MCP system",
   "version": "0.0.2",
@@ -77,13 +78,13 @@
           "type": "webview",
           "id": "remember-mcp-usage-panel",
           "name": "Copilot Usage",
-          "icon": "$(graph)"
+          "icon": "media/remember-mcp-logo-black.svg"
         },
         {
           "type": "webview",
           "id": "remember-mcp-panel",
           "name": "Server Control",
-          "icon": "$(gear)"
+          "icon": "media/remember-mcp-logo-black.svg"
         }
       ]
     },
@@ -92,7 +93,7 @@
         {
           "id": "remember-mcp-container",
           "title": "Remember MCP",
-          "icon": "$(server)"
+          "icon": "media/remember-mcp-logo-black.svg"
         }
       ]
     },
