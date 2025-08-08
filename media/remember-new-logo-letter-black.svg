@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Created with Pixodesk SVG (https://pixodesk.com) -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" text-rendering="geometricPrecision" shape-rendering="geometricPrecision" fill="none" stroke="none">
+  <g transform="translate(-2, -2)scale(0.07, 0.07)">
+    <path fill="currentColor" stroke="none" transform="translate(37.6544, 320.7636)" d="M23.0654,38.7029L82.1257,38.7029L82.1257,-182.5555L162.3636,-71.1436L162.3636,-168.8183L82.1257,-280.2301L23.0654,-280.2301L23.0654,38.7029z"/>
+    <path fill="currentColor" stroke="none" transform="translate(269.6311, 320.7636)scale(-1, 1)translate(-92.7145, 0)" d="M23.0654,38.7029L82.1257,38.7029L82.1256,-182.5555L162.3636,-71.1435L162.3636,-168.8183L82.1257,-280.2301L23.0654,-280.2301L23.0654,38.7029z"/>
+    <path fill="none" stroke="currentColor" stroke-width="50" transform="translate(-128.4998, -153.8241)" d="M363.2876,304.1249C363.2876,304.1249,362.6486,315.3312,313.9304,382.3236C295.633,407.4842,290.1009,448.728,310.7041,470.0984C331.3073,491.4688,352.2885,470.0984,352.2885,470.0984L432.5265,358.6865"/>
+  </g>
+</svg>
