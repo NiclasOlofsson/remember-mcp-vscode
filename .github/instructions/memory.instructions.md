@@ -1,5 +1,5 @@
 ---
-applyTo: "**"
+applyTo: '**'
 description: Remember MCP VS Code Extension Project Context
 ---
 
@@ -59,3 +59,5 @@ The extension uses the exact command from .vscode/mcp.json:
 ```
 pipx run --no-cache --system-site-packages --spec git+https://github.com/NiclasOlofsson/mode-manager-mcp.git mode-manager-mcp
 ```
+- **2025-08-08 05:21:** For this workspace, we want to stay in VS Code for all development and workflows.
+- **2025-08-08 05:21:** For this workspace, we want to stay in VS Code for all development and workflows, and then play some.
