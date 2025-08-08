@@ -2,7 +2,7 @@
   "name": "remember-mcp-vscode",
   "displayName": "Remember MCP",
   "description": "A VS Code extension that registers MCP servers with VS Code's built-in MCP system",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "publisher": "nickeolofsson",
   "repository": {
     "type": "git",
