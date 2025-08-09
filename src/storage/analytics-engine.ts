@@ -14,7 +14,9 @@ import {
     EventTypeDistribution, 
     HourlyDistribution, 
     DayOfWeekDistribution, 
-    SessionAnalytics 
+    SessionAnalytics,
+    VSCodeSessionAnalytics,
+    WindowSessionAnalytics 
 } from '../types/analytics';
 
 export class AnalyticsEngine {
@@ -37,6 +39,8 @@ export class AnalyticsEngine {
             hourlyDistribution: this.calculateHourlyDistribution(filteredEvents),
             dayOfWeekDistribution: this.calculateDayOfWeekDistribution(filteredEvents),
             sessionAnalytics: this.calculateSessionAnalytics(filteredEvents),
+            vscodeSessionAnalytics: this.calculateVSCodeSessionAnalytics(filteredEvents),
+            windowSessionAnalytics: this.calculateWindowSessionAnalytics(filteredEvents),
             generatedAt: new Date().toISOString()
         };
     }
@@ -321,11 +325,14 @@ export class AnalyticsEngine {
     }
 
     /**
-     * Calculate session analytics
+     * Calculate session analytics (with hierarchical session data)
      */
     private static calculateSessionAnalytics(events: CopilotUsageEvent[]): SessionAnalytics[] {
         const sessionMap = new Map<string, {
             sessionId: string;
+            vscodeSessionId: string;
+            windowId?: string;
+            extensionHostSessionId: string;
             events: CopilotUsageEvent[];
             workspaceId?: string;
         }>();
@@ -335,6 +342,9 @@ export class AnalyticsEngine {
             if (!sessionMap.has(event.sessionId)) {
                 sessionMap.set(event.sessionId, {
                     sessionId: event.sessionId,
+                    vscodeSessionId: event.vscodeSessionId,
+                    windowId: event.windowId,
+                    extensionHostSessionId: event.extensionHostSessionId,
                     events: [],
                     workspaceId: event.workspaceId
                 });
@@ -362,6 +372,9 @@ export class AnalyticsEngine {
             
             return {
                 sessionId: session.sessionId,
+                vscodeSessionId: session.vscodeSessionId,
+                windowId: session.windowId,
+                extensionHostSessionId: session.extensionHostSessionId,
                 startTime,
                 endTime: sortedEvents.length > 1 ? endTime : undefined,
                 duration,
@@ -369,6 +382,137 @@ export class AnalyticsEngine {
                 uniqueLanguages,
                 uniqueModels,
                 workspaceId: session.workspaceId
+            };
+        }).sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime());
+    }
+
+    /**
+     * Calculate VS Code session analytics (process-level sessions)
+     */
+    private static calculateVSCodeSessionAnalytics(events: CopilotUsageEvent[]): VSCodeSessionAnalytics[] {
+        const vscodeSessionMap = new Map<string, {
+            vscodeSessionId: string;
+            events: CopilotUsageEvent[];
+            windows: Set<string>;
+            extensionHostSessions: Set<string>;
+            workspaceIds: Set<string>;
+        }>();
+        
+        // Group events by VS Code session
+        for (const event of events) {
+            if (!vscodeSessionMap.has(event.vscodeSessionId)) {
+                vscodeSessionMap.set(event.vscodeSessionId, {
+                    vscodeSessionId: event.vscodeSessionId,
+                    events: [],
+                    windows: new Set(),
+                    extensionHostSessions: new Set(),
+                    workspaceIds: new Set()
+                });
+            }
+            const session = vscodeSessionMap.get(event.vscodeSessionId)!;
+            session.events.push(event);
+            if (event.windowId) {
+                session.windows.add(event.windowId);
+            }
+            session.extensionHostSessions.add(event.extensionHostSessionId);
+            if (event.workspaceId) {
+                session.workspaceIds.add(event.workspaceId);
+            }
+        }
+        
+        return Array.from(vscodeSessionMap.values()).map(session => {
+            const sortedEvents = session.events.sort((a, b) => 
+                new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+            );
+            
+            const startTime = sortedEvents[0].timestamp;
+            const endTime = sortedEvents[sortedEvents.length - 1].timestamp;
+            const duration = new Date(endTime).getTime() - new Date(startTime).getTime();
+            
+            const uniqueLanguages = Array.from(new Set(
+                sortedEvents.map(e => e.language).filter(l => l)
+            )) as string[];
+            
+            const uniqueModels = Array.from(new Set(
+                sortedEvents.map(e => e.model).filter(m => m)
+            )) as string[];
+            
+            return {
+                vscodeSessionId: session.vscodeSessionId,
+                startTime,
+                endTime: sortedEvents.length > 1 ? endTime : undefined,
+                duration,
+                eventCount: session.events.length,
+                windowCount: session.windows.size,
+                extensionHostRestarts: session.extensionHostSessions.size - 1, // Restarts = sessions - 1
+                uniqueLanguages,
+                uniqueModels,
+                workspaceIds: Array.from(session.workspaceIds)
+            };
+        }).sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime());
+    }
+
+    /**
+     * Calculate window session analytics
+     */
+    private static calculateWindowSessionAnalytics(events: CopilotUsageEvent[]): WindowSessionAnalytics[] {
+        const windowSessionMap = new Map<string, {
+            vscodeSessionId: string;
+            windowId: string;
+            events: CopilotUsageEvent[];
+            extensionHostSessions: Set<string>;
+            workspaceId?: string;
+        }>();
+        
+        // Group events by window
+        for (const event of events) {
+            if (!event.windowId) {
+                continue; // Skip events without window info
+            }
+            
+            const windowKey = `${event.vscodeSessionId}-${event.windowId}`;
+            if (!windowSessionMap.has(windowKey)) {
+                windowSessionMap.set(windowKey, {
+                    vscodeSessionId: event.vscodeSessionId,
+                    windowId: event.windowId,
+                    events: [],
+                    extensionHostSessions: new Set(),
+                    workspaceId: event.workspaceId
+                });
+            }
+            const windowSession = windowSessionMap.get(windowKey)!;
+            windowSession.events.push(event);
+            windowSession.extensionHostSessions.add(event.extensionHostSessionId);
+        }
+        
+        return Array.from(windowSessionMap.values()).map(windowSession => {
+            const sortedEvents = windowSession.events.sort((a, b) => 
+                new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+            );
+            
+            const startTime = sortedEvents[0].timestamp;
+            const endTime = sortedEvents[sortedEvents.length - 1].timestamp;
+            const duration = new Date(endTime).getTime() - new Date(startTime).getTime();
+            
+            const uniqueLanguages = Array.from(new Set(
+                sortedEvents.map(e => e.language).filter(l => l)
+            )) as string[];
+            
+            const uniqueModels = Array.from(new Set(
+                sortedEvents.map(e => e.model).filter(m => m)
+            )) as string[];
+            
+            return {
+                vscodeSessionId: windowSession.vscodeSessionId,
+                windowId: windowSession.windowId,
+                startTime,
+                endTime: sortedEvents.length > 1 ? endTime : undefined,
+                duration,
+                eventCount: windowSession.events.length,
+                extensionHostSessions: windowSession.extensionHostSessions.size,
+                uniqueLanguages,
+                uniqueModels,
+                workspaceId: windowSession.workspaceId
             };
         }).sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime());
     }

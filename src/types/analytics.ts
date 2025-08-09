@@ -9,6 +9,9 @@ export interface AnalyticsQuery {
     languages?: string[];
     models?: string[];
     sessionIds?: string[];
+    vscodeSessionIds?: string[];
+    extensionHostSessionIds?: string[];
+    windowIds?: string[];
 }
 
 export interface DateRange {
@@ -56,11 +59,40 @@ export interface EventTypeDistribution {
 }
 
 export interface SessionAnalytics {
-    sessionId: string;
+    sessionId: string;             // Composite session ID (backward compatibility)
+    vscodeSessionId: string;       // VS Code process session
+    windowId?: string;             // VS Code window
+    extensionHostSessionId: string; // Extension host session
     startTime: string;
     endTime?: string;
     duration: number;              // Total session duration in ms
     eventCount: number;
+    uniqueLanguages: string[];
+    uniqueModels: string[];
+    workspaceId?: string;
+}
+
+export interface VSCodeSessionAnalytics {
+    vscodeSessionId: string;       // VS Code process session
+    startTime: string;
+    endTime?: string;
+    duration: number;
+    eventCount: number;
+    windowCount: number;           // Number of windows in this VS Code session
+    extensionHostRestarts: number; // Number of extension host restarts
+    uniqueLanguages: string[];
+    uniqueModels: string[];
+    workspaceIds: string[];
+}
+
+export interface WindowSessionAnalytics {
+    vscodeSessionId: string;
+    windowId: string;
+    startTime: string;
+    endTime?: string;
+    duration: number;
+    eventCount: number;
+    extensionHostSessions: number; // Number of extension host sessions in this window
     uniqueLanguages: string[];
     uniqueModels: string[];
     workspaceId?: string;
@@ -89,6 +121,8 @@ export interface AnalyticsResult {
     hourlyDistribution: HourlyDistribution[];
     dayOfWeekDistribution: DayOfWeekDistribution[];
     sessionAnalytics: SessionAnalytics[];
+    vscodeSessionAnalytics: VSCodeSessionAnalytics[];
+    windowSessionAnalytics: WindowSessionAnalytics[];
     generatedAt: string;          // ISO8601 timestamp
 }
 

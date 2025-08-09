@@ -4,13 +4,16 @@
  */
 
 export interface CopilotUsageEvent {
-    id: string;                    // UUID for deduplication
+    id: string;                    // Deterministic ID for deduplication
     timestamp: string;             // ISO8601 timestamp
     type: 'chat' | 'completion' | 'edit' | 'explain';
     source: 'copilot-chat' | 'copilot-inline' | 'copilot-sidebar';
     
-    // Session Information
-    sessionId: string;             // VS Code session identifier
+    // Session Information (hierarchical)
+    vscodeSessionId: string;       // VS Code process session (20250808T010909)
+    windowId?: string;             // VS Code window identifier (window1, window2)
+    extensionHostSessionId: string; // Extension host session (20250808T010916)
+    sessionId: string;             // Composite session ID for backward compatibility
     workspaceId?: string;          // Workspace folder hash
     
     // Event Details

@@ -1,6 +1,11 @@
 /**
  * Enhanced Copilot log parser for comprehensive event extraction
- * Based on architecture document specifications
+ * Pure implementation - no current session dependencies
+ * 
+ * Comprehensive data sources:
+ * - Traditional extension logs (GitHub.Copilot.log, GitHub.Copilot-Chat.log)
+ * - General VS Code logs (exthost.log, sharedprocess.log, renderer.log)
+ * - Output logging directories (output_logging_*)
  * 
  * Language extraction approach:
  * - Limited approach: Extract language info only when clearly available
@@ -9,36 +14,40 @@
  * - Focus on what we can reliably extract rather than guessing
  */
 
-import * as vscode from 'vscode';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
 import { CopilotUsageEvent } from '../types/usage-events';
-
-/**
- * Simple UUID v4 generator to avoid external dependency
- */
-function generateUuid(): string {
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-        const r = Math.random() * 16 | 0;
-        const v = c === 'x' ? r : (r & 0x3 | 0x8);
-        return v.toString(16);
-    });
-}
+import { ILogger, SilentLogger } from '../types/logger';
 
 export class CopilotLogParser {
     private static readonly LOG_PATHS = {
         win32: [
+            // VS Code Insiders (prioritized for development)
+            path.join(os.homedir(), 'AppData/Roaming/Code - Insiders/logs'),
+            // VS Code Stable
             path.join(os.homedir(), 'AppData/Roaming/Code/logs'),
-            path.join(os.homedir(), 'AppData/Roaming/Code - Insiders/logs')
+            // Additional possible locations
+            path.join(os.homedir(), 'AppData/Roaming/Code - OSS/logs'),
+            path.join(os.homedir(), 'AppData/Roaming/VSCode/logs')
         ],
         darwin: [
+            // VS Code Insiders (prioritized for development)
+            path.join(os.homedir(), 'Library/Application Support/Code - Insiders/logs'),
+            // VS Code Stable
             path.join(os.homedir(), 'Library/Application Support/Code/logs'),
-            path.join(os.homedir(), 'Library/Application Support/Code - Insiders/logs')
+            // Additional possible locations
+            path.join(os.homedir(), 'Library/Application Support/Code - OSS/logs'),
+            path.join(os.homedir(), 'Library/Application Support/VSCode/logs')
         ],
         linux: [
+            // VS Code Insiders (prioritized for development)
+            path.join(os.homedir(), '.config/Code - Insiders/logs'),
+            // VS Code Stable
             path.join(os.homedir(), '.config/Code/logs'),
-            path.join(os.homedir(), '.config/Code - Insiders/logs')
+            // Additional possible locations
+            path.join(os.homedir(), '.config/Code - OSS/logs'),
+            path.join(os.homedir(), '.config/VSCode/logs')
         ]
     };
 
@@ -56,6 +65,15 @@ export class CopilotLogParser {
         featureActivation: /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}) \[info\] activationBlocker from '([^']+)' took for (\d+)ms/,
         agentRegistration: /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}) \[info\] Registering (.*?) agent/,
         
+        // General VS Code log patterns (exthost.log, sharedprocess.log, renderer.log)
+        githubCopilotActivity: /(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}).*?[Cc]opilot(.+)/,
+        extensionHostActivity: /(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}).*?vscode\.github\.copilot(.+)/,
+        chatActivity: /(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}).*?copilot.*?chat(.+)/,
+        completionActivity: /(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}).*?copilot.*?completion(.+)/,
+        
+        // Output logging patterns
+        outputLogging: /(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}).*?\[(trace|debug|info|warn|error)\](.+)/,
+        
         // General service initialization
         serviceInit: /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}) \[info\] \[([^\]]+)\] (.+)/,
         
@@ -63,33 +81,103 @@ export class CopilotLogParser {
         infoMessage: /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}) \[info\] (.+)/
     };
 
-    constructor(private outputChannel?: vscode.OutputChannel) {}
+    private logger: ILogger;
+
+    constructor(logger?: ILogger) {
+        this.logger = logger || new SilentLogger();
+    }
 
     /**
      * Find all Copilot log files across VS Code installations
+     * Prioritizes both VS Code Insiders and VS Code Stable
      */
     async findCopilotLogs(): Promise<string[]> {
         const platform = os.platform() as keyof typeof CopilotLogParser.LOG_PATHS;
         const searchPaths = CopilotLogParser.LOG_PATHS[platform] || CopilotLogParser.LOG_PATHS.linux;
         
         const logFiles: string[] = [];
+        const installationsFound: string[] = [];
         
         for (const basePath of searchPaths) {
             try {
-                await this.debug(`Searching for logs in: ${basePath}`);
+                await this.debug(`Scanning VS Code installation: ${basePath}`);
+                
+                // Check if this installation exists
+                const exists = await this.directoryExists(basePath);
+                if (!exists) {
+                    await this.debug(`Installation not found: ${basePath}`);
+                    continue;
+                }
+                
+                // Identify which VS Code version this is
+                const installationType = this.identifyVSCodeInstallation(basePath);
+                installationsFound.push(installationType);
+                await this.debug(`Found ${installationType} installation`);
                 
                 // Look for copilot-related log files
                 const files = await this.findLogFilesInPath(basePath);
                 logFiles.push(...files);
                 
-                await this.debug(`Found ${files.length} log files in ${basePath}`);
+                await this.debug(`Extracted ${files.length} log files from ${installationType}`);
             } catch (error) {
-                await this.debug(`Path not accessible: ${basePath} - ${error}`);
+                await this.debug(`Error accessing VS Code installation ${basePath}: ${error}`);
             }
         }
         
-        await this.debug(`Total Copilot log files found: ${logFiles.length}`);
+        // Report summary
+        await this.debug(`=== VS Code Installation Summary ===`);
+        await this.debug(`Installations found: ${installationsFound.join(', ')}`);
+        await this.debug(`Total Copilot log files discovered: ${logFiles.length}`);
+        
+        if (installationsFound.length === 0) {
+            await this.debug(`⚠️ No VS Code installations found. Expected locations:`);
+            searchPaths.forEach(path => this.debug(`  - ${path}`));
+        } else {
+            await this.debug(`✅ Successfully scanned ${installationsFound.length} VS Code installation(s)`);
+        }
+        
         return logFiles;
+    }
+
+    /**
+     * Scan for available VS Code installations
+     */
+    async scanVSCodeInstallations(): Promise<{
+        available: Array<{type: string, path: string, logCount: number}>,
+        total: number
+    }> {
+        const platform = os.platform() as keyof typeof CopilotLogParser.LOG_PATHS;
+        const searchPaths = CopilotLogParser.LOG_PATHS[platform] || CopilotLogParser.LOG_PATHS.linux;
+        
+        const available: Array<{type: string, path: string, logCount: number}> = [];
+        
+        for (const basePath of searchPaths) {
+            try {
+                const exists = await this.directoryExists(basePath);
+                if (exists) {
+                    const installationType = this.identifyVSCodeInstallation(basePath);
+                    const logFiles = await this.findLogFilesInPath(basePath);
+                    
+                    available.push({
+                        type: installationType,
+                        path: basePath,
+                        logCount: logFiles.length
+                    });
+                    
+                    await this.debug(`✅ ${installationType}: ${logFiles.length} log files at ${basePath}`);
+                } else {
+                    const installationType = this.identifyVSCodeInstallation(basePath);
+                    await this.debug(`❌ ${installationType}: Not installed at ${basePath}`);
+                }
+            } catch (error) {
+                await this.debug(`⚠️ Error checking ${basePath}: ${error}`);
+            }
+        }
+        
+        return {
+            available,
+            total: available.reduce((sum, install) => sum + install.logCount, 0)
+        };
     }
 
     /**
@@ -314,19 +402,26 @@ export class CopilotLogParser {
                 break;
         }
         
+        const sessionInfo = this.extractSessionInfo(filePath);
+        const vsCodeVersion = this.inferVSCodeVersion(filePath);
+        
         const event: CopilotUsageEvent = {
             id: this.generateEventId(timestamp, eventType, filePath),
             timestamp: eventTime.toISOString(),
             type: this.mapEventType(eventType),
             source: this.inferSource(eventType, originalLine),
-            sessionId: this.extractSessionId(filePath),
+            vscodeSessionId: sessionInfo.vscodeSessionId,
+            windowId: sessionInfo.windowId,
+            extensionHostSessionId: sessionInfo.extensionHostSessionId,
+            sessionId: sessionInfo.sessionId, // Composite for backward compatibility
             workspaceId: this.extractWorkspaceId(originalLine),
             duration,
             tokensUsed,
             model,
             language: this.extractLanguage(groups, eventType),
             filePath: this.extractFilePath(originalLine),
-            vsCodeVersion: this.inferVSCodeVersion(filePath),
+            
+            vsCodeVersion,
             copilotVersion: 'unknown', // Could be extracted from other log entries
             extensionVersion: this.getExtensionVersion()
         };
@@ -335,7 +430,8 @@ export class CopilotLogParser {
     }
 
     /**
-     * Generate a deterministic UUID for event deduplication
+     * Generate a deterministic ID for event deduplication
+     * Uses hash-based approach to ensure same events get same IDs
      */
     private generateEventId(timestamp: string, eventType: string, filePath: string): string {
         const input = `${timestamp}-${eventType}-${path.basename(filePath)}`;
@@ -385,13 +481,59 @@ export class CopilotLogParser {
     }
 
     /**
-     * Extract session ID from file path
+     * Extract comprehensive session information from file path
+     * Path structure: /logs/20250808T010909/window1/exthost/output_logging_20250808T010916/1-GitHub.Copilot.log
      */
-    private extractSessionId(filePath: string): string {
-        // Use directory name as session identifier
-        const dir = path.dirname(filePath);
-        const sessionMatch = dir.match(/output_logging_(\d+)/);
-        return sessionMatch ? sessionMatch[1] : path.basename(dir);
+    private extractSessionInfo(filePath: string): {
+        vscodeSessionId: string;
+        windowId?: string;
+        extensionHostSessionId: string;
+        sessionId: string;
+    } {
+        const normalizedPath = path.normalize(filePath);
+        const parts = normalizedPath.split(path.sep);
+        
+        // Find the relevant parts in the path
+        let vscodeSessionId = 'unknown';
+        let windowId: string | undefined;
+        let extensionHostSessionId = 'unknown';
+        
+        // Look for timestamp patterns (VS Code session)
+        const vscodeSessionMatch = normalizedPath.match(/(\d{8}T\d{6})/);
+        if (vscodeSessionMatch) {
+            vscodeSessionId = vscodeSessionMatch[1];
+        }
+        
+        // Look for window identifier
+        const windowMatch = normalizedPath.match(/window(\d+)/);
+        if (windowMatch) {
+            windowId = `window${windowMatch[1]}`;
+        }
+        
+        // Look for extension host session (output_logging timestamp)
+        const extensionHostMatch = normalizedPath.match(/output_logging_(\d{8}T\d{6})/);
+        if (extensionHostMatch) {
+            extensionHostSessionId = extensionHostMatch[1];
+        } else {
+            // Fallback to directory name for extension host session
+            const dir = path.dirname(filePath);
+            extensionHostSessionId = path.basename(dir);
+        }
+        
+        // Create composite session ID for backward compatibility
+        let sessionId = extensionHostSessionId;
+        if (windowId) {
+            sessionId = `${vscodeSessionId}-${windowId}-${extensionHostSessionId}`;
+        } else {
+            sessionId = `${vscodeSessionId}-${extensionHostSessionId}`;
+        }
+        
+        return {
+            vscodeSessionId,
+            windowId,
+            extensionHostSessionId,
+            sessionId
+        };
     }
 
     /**
@@ -404,47 +546,6 @@ export class CopilotLogParser {
     }
 
     /**
-     * Extract duration from regex groups
-     */
-    private extractDuration(groups: string[], eventType: string): number | undefined {
-        if (eventType === 'completion' && groups.length > 1) {
-            return parseInt(groups[1], 10);
-        } else if (eventType === 'modelRequest' && groups.length > 2) {
-            return parseInt(groups[2], 10);
-        }
-        return undefined;
-    }
-
-    /**
-     * Estimate token usage based on event type and context
-     */
-    private estimateTokenUsage(eventType: string, groups: string[]): number | undefined {
-        // Simple estimation based on event type
-        switch (eventType) {
-            case 'chatMessage':
-                return groups[1] ? Math.ceil(groups[1].length / 4) : undefined; // ~4 chars per token
-            case 'completion':
-                return 50; // Average completion token usage
-            case 'edit':
-                return 30; // Average edit token usage
-            case 'explain':
-                return 100; // Average explain token usage
-            default:
-                return undefined;
-        }
-    }
-
-    /**
-     * Extract model name from regex groups
-     */
-    private extractModel(groups: string[], eventType: string): string | undefined {
-        if (eventType === 'modelRequest' && groups.length > 1) {
-            return groups[1].trim();
-        }
-        return undefined;
-    }
-
-    /**
      * Extract programming language from regex groups or infer from context (limited approach)
      */
     private extractLanguage(groups: string[], eventType: string): string | undefined {
@@ -452,81 +553,6 @@ export class CopilotLogParser {
         // Historical logs don't contain reliable language information
         // Always return undefined - analytics engine will convert to "unknown"
         return undefined;
-    }
-
-    /**
-     * Get current language from VS Code's active editor
-     */
-    private getCurrentLanguageFromVSCode(): string | undefined {
-        try {
-            const activeEditor = vscode.window.activeTextEditor;
-            if (activeEditor) {
-                return activeEditor.document.languageId;
-            }
-        } catch (error) {
-            // VS Code context not available
-        }
-        return undefined;
-    }
-
-    /**
-     * Get current file path from VS Code's active editor
-     */
-    private getCurrentFilePathFromVSCode(): string | undefined {
-        try {
-            const activeEditor = vscode.window.activeTextEditor;
-            if (activeEditor) {
-                return activeEditor.document.fileName;
-            }
-        } catch (error) {
-            // VS Code context not available
-        }
-        return undefined;
-    }
-
-    /**
-     * Infer language from file path/extension
-     */
-    private inferLanguageFromFilePath(filePath: string): string | undefined {
-        const extension = path.extname(filePath).toLowerCase();
-        
-        const extensionMap: { [key: string]: string } = {
-            '.js': 'javascript',
-            '.jsx': 'javascriptreact',
-            '.ts': 'typescript',
-            '.tsx': 'typescriptreact',
-            '.py': 'python',
-            '.java': 'java',
-            '.c': 'c',
-            '.cpp': 'cpp',
-            '.cs': 'csharp',
-            '.php': 'php',
-            '.rb': 'ruby',
-            '.go': 'go',
-            '.rs': 'rust',
-            '.swift': 'swift',
-            '.kt': 'kotlin',
-            '.scala': 'scala',
-            '.html': 'html',
-            '.css': 'css',
-            '.scss': 'scss',
-            '.sass': 'sass',
-            '.less': 'less',
-            '.md': 'markdown',
-            '.json': 'json',
-            '.xml': 'xml',
-            '.yaml': 'yaml',
-            '.yml': 'yaml',
-            '.sql': 'sql',
-            '.sh': 'shellscript',
-            '.bash': 'shellscript',
-            '.ps1': 'powershell',
-            '.r': 'r',
-            '.matlab': 'matlab',
-            '.m': 'matlab'
-        };
-        
-        return extensionMap[extension];
     }
 
     /**
@@ -543,15 +569,19 @@ export class CopilotLogParser {
     }
 
     /**
-     * Infer VS Code version from file path
+     * Infer VS Code version from file path with detailed detection
      */
     private inferVSCodeVersion(filePath: string): string {
         if (filePath.includes('Code - Insiders')) {
             return 'VS Code Insiders';
+        } else if (filePath.includes('Code - OSS')) {
+            return 'VS Code OSS';
+        } else if (filePath.includes('VSCode')) {
+            return 'VSCode';
         } else if (filePath.includes('Code')) {
             return 'VS Code Stable';
         }
-        return 'Unknown';
+        return 'Unknown VS Code Installation';
     }
 
     /**
@@ -592,15 +622,12 @@ export class CopilotLogParser {
     }
 
     /**
-     * Get current extension version
+     * Get extension version from package.json (pure, no VS Code API)
      */
     private getExtensionVersion(): string {
-        try {
-            const extension = vscode.extensions.getExtension('nickeolofsson.remember-mcp-vscode');
-            return extension?.packageJSON.version || 'unknown';
-        } catch (error) {
-            return 'unknown';
-        }
+        // For historical parsing, we don't need current extension version
+        // This should be provided by the caller if needed
+        return 'historical-parse';
     }
 
     /**
@@ -637,6 +664,22 @@ export class CopilotLogParser {
             await this.debug(`Error reading window directories from ${sessionPath}: ${error}`);
         }
         return windowDirs;
+    }
+
+    /**
+     * Identify which VS Code installation type from path
+     */
+    private identifyVSCodeInstallation(basePath: string): string {
+        if (basePath.includes('Code - Insiders')) {
+            return 'VS Code Insiders';
+        } else if (basePath.includes('Code - OSS')) {
+            return 'VS Code OSS';
+        } else if (basePath.includes('VSCode')) {
+            return 'VSCode';
+        } else if (basePath.includes('Code')) {
+            return 'VS Code Stable';
+        }
+        return 'Unknown VS Code';
     }
 
     /**
@@ -711,11 +754,9 @@ export class CopilotLogParser {
     }
 
     /**
-     * Debug logging helper
+     * Debug logging helper using dependency injection
      */
     private async debug(message: string): Promise<void> {
-        if (this.outputChannel) {
-            this.outputChannel.appendLine(`[CopilotLogParser] ${message}`);
-        }
+        this.logger.appendLine(`[CopilotLogParser] ${message}`);
     }
 }
