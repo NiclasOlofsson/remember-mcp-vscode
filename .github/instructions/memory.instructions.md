@@ -35,6 +35,13 @@ This project creates a VS Code extension that provides a visual interface for ru
 - First, verify that the webpack watcher (`npm watch`) is running and healthy
 - Only proceed with linting if webpack is running without problems
 - This ensures build consistency and avoids redundant compilation steps
+
+**Law 15:** For this VS Code extension project:
+- Before any commit, always run: `npm run compile` and `npm run lint`
+- Ensure webpack compilation succeeds before staging files
+- All TypeScript files must compile without errors
+- ESLint must pass without warnings for production commits
+- If build fails, fix issues before committing any files
 - **2025-08-09 12:15:** VS Code Marketplace Publishing Best Practices and Workflow:
 
 DUAL README STRATEGY:
