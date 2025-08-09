@@ -66,3 +66,4 @@ TECHNICAL DETAILS:
 - vsce prepublish script runs automatically during publishing
 - Always commit version bumps back to git after publishing
 - Marketplace URLs: https://marketplace.visualstudio.com/items?itemName=publisher.extension-name
+- **2025-08-09 13:37:** For the remember-vscode workspace: Never install VSIX packages using code-insiders --install-extension. The user will always use F5 (Extension Development Host) to test extensions. Only build/compile the code - never install it globally.

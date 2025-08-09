@@ -72,6 +72,10 @@ dist/
 .vscode-test/
 README_marketplace.md
 
+# Temporary directories (do not commit)
+temp_auto/
+temp_summary/
+
 # dotenv environment variable files
 .env
 .env.*

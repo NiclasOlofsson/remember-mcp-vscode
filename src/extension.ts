@@ -4,6 +4,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import { CopilotUsageHistoryPanel } from './webview/copilot-usage-history-panel';
+import { CopilotLogParser } from './parsing/copilot-log-parser';
 
 const execAsync = promisify(exec);
 
@@ -1176,6 +1178,9 @@ export class RememberMcpUsagePanelProvider implements vscode.WebviewViewProvider
 // Extension activation function
 export function activate(context: vscode.ExtensionContext) {
     console.log('Remember MCP extension is now active!');
+    
+    // Show immediate debug message
+    vscode.window.showInformationMessage('Remember MCP Extension Activated!');
 
     // Check prerequisites on startup
     PrerequisiteChecker.checkPrerequisites().then(prerequisites => {
@@ -1219,6 +1224,19 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.registerWebviewViewProvider(RememberMcpUsagePanelProvider.viewType, usagePanelProvider)
     );
 
+    // Register enhanced Copilot Usage History panel provider
+    const outputChannel = rememberManager['outputChannel'] as vscode.OutputChannel;
+    outputChannel.appendLine('=== EXTENSION ACTIVATION: Creating CopilotUsageHistoryPanel ===');
+    outputChannel.show();
+    
+    const usageHistoryPanelProvider = new CopilotUsageHistoryPanel(context.extensionUri, context, outputChannel);
+    outputChannel.appendLine('=== EXTENSION ACTIVATION: Registering webview provider ===');
+    
+    context.subscriptions.push(
+        vscode.window.registerWebviewViewProvider(CopilotUsageHistoryPanel.viewType, usageHistoryPanelProvider)
+    );
+    outputChannel.appendLine('=== EXTENSION ACTIVATION: CopilotUsageHistoryPanel registered successfully ===');
+
     // Register webview panel provider
     const panelProvider = new RememberMcpPanelProvider(context.extensionUri, rememberManager);
     context.subscriptions.push(
@@ -1251,6 +1269,28 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showInformationMessage('Model usage statistics cleared.');
     });
 
+    // Add Copilot Usage History commands
+    const showUsageHistoryCommand = vscode.commands.registerCommand('remember-mcp.showUsageHistory', () => {
+        vscode.commands.executeCommand('workbench.view.extension.remember-mcp-container');
+    });
+
+    const clearUsageHistoryCommand = vscode.commands.registerCommand('remember-mcp.clearUsageHistory', async () => {
+        try {
+            const result = await vscode.window.showWarningMessage(
+                'Are you sure you want to clear all Copilot usage history? This action cannot be undone.',
+                { modal: true },
+                'Yes, Clear All'
+            );
+
+            if (result === 'Yes, Clear All') {
+                await usageHistoryPanelProvider.clearStorage();
+                vscode.window.showInformationMessage('Copilot usage history cleared successfully.');
+            }
+        } catch (error) {
+            vscode.window.showErrorMessage(`Failed to clear usage history: ${error}`);
+        }
+    });
+
     // Add all disposables
     context.subscriptions.push(
         rememberManager,
@@ -1259,7 +1299,9 @@ export function activate(context: vscode.ExtensionContext) {
         restartCommand,
         showPanelCommand,
         showOutputCommand,
-        clearUsageStatsCommand
+        clearUsageStatsCommand,
+        showUsageHistoryCommand,
+        clearUsageHistoryCommand
     );
 
     // Auto-start MCP server if configured
@@ -1352,6 +1394,35 @@ export function activate(context: vscode.ExtensionContext) {
     // Automatically start tailing on extension activation
     startCopilotLogTail();
 
+    // Add debug command to inspect log content
+    const debugLogCommand = vscode.commands.registerCommand('remember-mcp.debugLogContent', async () => {
+        const outputChannel = rememberManager['outputChannel'] as vscode.OutputChannel;
+        outputChannel.show();
+        
+        // Use the log parser
+        const parser = new CopilotLogParser(outputChannel);
+        
+        const logFiles = await parser.findCopilotLogs();
+        if (logFiles.length > 0) {
+            // Inspect the first few logs that have content
+            outputChannel.appendLine(`Found ${logFiles.length} log files. Inspecting first few...`);
+            
+            let inspected = 0;
+            for (const logFile of logFiles.slice(0, 5)) {
+                await parser.inspectLogFile(logFile, 20);
+                inspected++;
+                if (inspected >= 3) {
+                    break;
+                }
+            }
+        } else {
+            outputChannel.appendLine('No Copilot log files found.');
+        }
+    });
+
+    // Add to subscriptions
+    context.subscriptions.push(debugLogCommand);
+    
     // Dispose the tail and poller on deactivate
     context.subscriptions.push({
         dispose: () => {
@@ -1367,6 +1438,8 @@ export function activate(context: vscode.ExtensionContext) {
                 clearInterval(copilotTailPoller);
                 copilotTailPoller = null;
             }
+            // Dispose usage history panel
+            usageHistoryPanelProvider.dispose();
         }
     });
 }

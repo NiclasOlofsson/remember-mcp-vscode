@@ -70,10 +70,34 @@
         "title": "Clear Usage Statistics",
         "category": "Remember MCP",
         "icon": "$(clear-all)"
+      },
+      {
+        "command": "remember-mcp.debugLogContent",
+        "title": "Debug Log Content",
+        "category": "Remember MCP",
+        "icon": "$(debug)"
+      },
+      {
+        "command": "remember-mcp.showUsageHistory",
+        "title": "Show Copilot Usage History",
+        "category": "Copilot Usage History",
+        "icon": "$(graph)"
+      },
+      {
+        "command": "remember-mcp.clearUsageHistory",
+        "title": "Clear Copilot Usage History",
+        "category": "Copilot Usage History",
+        "icon": "$(trash)"
       }
     ],
     "views": {
       "remember-mcp-container": [
+        {
+          "type": "webview",
+          "id": "copilot-usage-history-panel",
+          "name": "Usage History",
+          "icon": "media/remember-new-logo-letter-black.svg"
+        },
         {
           "type": "webview",
           "id": "remember-mcp-usage-panel",
@@ -142,6 +166,7 @@
   "devDependencies": {
     "@types/mocha": "^10.0.10",
     "@types/node": "22.x",
+    "@types/uuid": "^10.0.0",
     "@types/vscode": "^1.102.0",
     "@typescript-eslint/eslint-plugin": "^8.39.0",
     "@typescript-eslint/parser": "^8.39.0",
@@ -152,5 +177,9 @@
     "typescript": "^5.9.2",
     "webpack": "^5.101.0",
     "webpack-cli": "^6.0.1"
+  },
+  "dependencies": {
+    "chart.js": "^4.5.0",
+    "uuid": "^10.0.0"
   }
 }
