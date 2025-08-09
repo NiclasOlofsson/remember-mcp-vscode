@@ -6,6 +6,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import { CopilotUsageHistoryPanel } from './webview/copilot-usage-history-panel';
 import { CopilotLogParser } from './parsing/copilot-log-parser';
+import { VSCodeLogger } from './types/logger';
 
 const execAsync = promisify(exec);
 
@@ -358,7 +359,6 @@ export class RememberMcpManager {
         }
         
         this.outputChannel.appendLine(`Registering Remember MCP Server with command: ${serverCommand}`);
-        this.outputChannel.show();
 
         try {
             // Parse command and arguments
@@ -499,7 +499,6 @@ export class RememberMcpPanelProvider implements vscode.WebviewViewProvider {
         
         try {
             const outputChannel = this.rememberManager['outputChannel'] as vscode.OutputChannel;
-            outputChannel.show();
             outputChannel.appendLine('Starting automatic pipx installation...');
             
             const success = await PrerequisiteChecker.installPipx(outputChannel);
@@ -1175,6 +1174,15 @@ export class RememberMcpUsagePanelProvider implements vscode.WebviewViewProvider
     }
 }
 
+/**
+ * Shows output channel only in development mode to avoid being "needy" in production
+ */
+function showOutputChannelInDevelopment(outputChannel: vscode.OutputChannel, context: vscode.ExtensionContext) {
+    if (context.extensionMode === vscode.ExtensionMode.Development) {
+        outputChannel.show(true); // preserveFocus = true to be less intrusive
+    }
+}
+
 // Extension activation function
 export function activate(context: vscode.ExtensionContext) {
     console.log('Remember MCP extension is now active!');
@@ -1227,7 +1235,6 @@ export function activate(context: vscode.ExtensionContext) {
     // Register enhanced Copilot Usage History panel provider
     const outputChannel = rememberManager['outputChannel'] as vscode.OutputChannel;
     outputChannel.appendLine('=== EXTENSION ACTIVATION: Creating CopilotUsageHistoryPanel ===');
-    outputChannel.show();
     
     const usageHistoryPanelProvider = new CopilotUsageHistoryPanel(context.extensionUri, context, outputChannel);
     outputChannel.appendLine('=== EXTENSION ACTIVATION: Registering webview provider ===');
@@ -1397,10 +1404,9 @@ export function activate(context: vscode.ExtensionContext) {
     // Add debug command to inspect log content
     const debugLogCommand = vscode.commands.registerCommand('remember-mcp.debugLogContent', async () => {
         const outputChannel = rememberManager['outputChannel'] as vscode.OutputChannel;
-        outputChannel.show();
         
         // Use the log parser
-        const parser = new CopilotLogParser(outputChannel);
+        const parser = new CopilotLogParser(new VSCodeLogger(outputChannel, context.extensionMode));
         
         const logFiles = await parser.findCopilotLogs();
         if (logFiles.length > 0) {

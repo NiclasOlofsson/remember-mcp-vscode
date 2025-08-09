@@ -7,6 +7,7 @@ import * as vscode from 'vscode';
 import { UsageStorageManager } from '../storage/usage-storage-manager';
 import { AnalyticsEngine } from '../storage/analytics-engine';
 import { CopilotLogParser } from '../parsing/copilot-log-parser';
+import { VSCodeLogger } from '../types/logger';
 import { CopilotUsageEvent, DateRange } from '../types/usage-events';
 import { AnalyticsQuery, DashboardWidgetData } from '../types/analytics';
 
@@ -24,10 +25,9 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
         private readonly outputChannel: vscode.OutputChannel
     ) {
         this.outputChannel.appendLine('=== COPILOT USAGE HISTORY PANEL: Constructor called ===');
-        this.outputChannel.show();
         
         this.storageManager = new UsageStorageManager(context);
-        this.logParser = new CopilotLogParser(outputChannel);
+        this.logParser = new CopilotLogParser(new VSCodeLogger(outputChannel, context.extensionMode));
         
         this.outputChannel.appendLine('=== COPILOT USAGE HISTORY PANEL: Storage manager and log parser created ===');
         
@@ -48,7 +48,6 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
         _token: vscode.CancellationToken,
     ) {
         this.outputChannel.appendLine('=== WEBVIEW: resolveWebviewView called ===');
-        this.outputChannel.show();
         
         this.webviewView = webviewView;
 
@@ -67,7 +66,6 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
         // Handle messages from webview
         webviewView.webview.onDidReceiveMessage(async data => {
             this.outputChannel.appendLine(`[WebviewMessage] Received: ${JSON.stringify(data)}`);
-            this.outputChannel.show(); // Force show the output channel
             
             // Also try showing a popup to confirm message reception
             vscode.window.showInformationMessage(`Webview message received: ${data.type}`);
@@ -87,7 +85,6 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
                     break;
                 case 'clearData':
                     this.outputChannel.appendLine('[WebviewMessage] Processing clearData request');
-                    this.outputChannel.show(); // Force show again for this case
                     await this.clearData();
                     break;
                 case 'updateSettings':
@@ -120,7 +117,6 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
     private async scanHistoricalLogs(): Promise<void> {
         try {
             this.outputChannel.appendLine('Starting historical log scan...');
-            this.outputChannel.show();
 
             // Show progress in webview
             await this.postMessage({
@@ -223,7 +219,6 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
      */
     private async clearData(): Promise<void> {
         this.outputChannel.appendLine('[ClearData] Starting clearData method');
-        this.outputChannel.show(); // Force show the output channel
         
         // Show confirmation dialog using VS Code's native modal
         const confirmation = await vscode.window.showWarningMessage(
