@@ -4,7 +4,6 @@
   "displayName": "Remember MCP",
   "description": "A VS Code extension that registers MCP servers with VS Code's built-in MCP system",
   "version": "0.0.7",
-  "readme": "README_marketplace.md",
   "publisher": "nickeolofsson",
   "repository": {
     "type": "git",
@@ -126,7 +125,8 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run package",
+    "vscode:prepublish": "npm run generate-marketplace-readme && npm run package",
+    "generate-marketplace-readme": "node scripts/generate-marketplace-readme.js",
     "compile": "webpack",
     "watch": "webpack --watch",
     "package": "webpack --mode production --devtool hidden-source-map",
@@ -136,8 +136,8 @@
     "lint": "eslint src",
     "test": "vscode-test",
     "bump-version": "npm version patch",
-    "package:marketplace": "npm run bump-version && vsce package --readme README_marketplace.md",
-    "publish:marketplace": "npm run package:marketplace && vsce publish --readme README_marketplace.md"
+    "package:marketplace": "npm run bump-version && vsce package --readme-path README_marketplace.md",
+    "publish:marketplace": "npm run package:marketplace && vsce publish --readme-path README_marketplace.md"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",

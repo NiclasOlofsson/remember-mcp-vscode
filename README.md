@@ -1,5 +1,36 @@
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/NiclasOlofsson/mode-manager-mcp/refs/heads/main/remember-new-logo-complete-white.svg">
+<picture>[![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/nickeolofsson.remember-mcp-vscode?label=VS%20Code%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=nickeolofsson.remember-mcp-vscode)
+
+<!-- MARKETPLACE-EXCLUDE-START -->
+## 🔧 Development Status
+
+[![CI Build](https://github.com/NiclasOlofsson/remember-mcp-vscode/workflows/CI/badge.svg)](https://github.com/NiclasOlofsson/remember-mcp-vscode/actions)
+[![Tests](https://github.com/NiclasOlofsson/remember-mcp-vscode/workflows/Tests/badge.svg)](https://github.com/NiclasOlofsson/remember-mcp-vscode/actions)
+[![Coverage](https://codecov.io/gh/NiclasOlofsson/remember-mcp-vscode/branch/main/graph/badge.svg)](https://codecov.io/gh/NiclasOlofsson/remember-mcp-vscode)
+
+### 👨‍💻 For Contributors
+
+- Clone this repository: `git clone https://github.com/NiclasOlofsson/remember-mcp-vscode.git`
+- Run `npm install` to install dependencies  
+- Press `F5` to launch the extension in development mode
+- See `CONTRIBUTING.md` for detailed development guidelines
+- Run `npm test` to execute tests
+- Run `npm run lint` to check code style
+
+### 📁 Project Structure
+```
+src/
+├── extension.ts      # Main extension entry point
+├── test/            # Test files
+└── ...
+```
+
+### 🚀 Release Process
+1. Run `npm run package:marketplace` to create VSIX with marketplace README
+2. Test the VSIX locally: `code --install-extension remember-mcp-vscode-x.x.x.vsix`
+3. Run `npm run publish:marketplace` to publish to marketplace
+<!-- MARKETPLACE-EXCLUDE-END -->
+
+Welcome to **Remember MCP**, the VS Code extension that brings real, persistent memory to your AI assistant and your team. Instantly store preferences, facts, and best practices—so Copilot always knows your context, and your team's knowledge is never lost.<source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/NiclasOlofsson/mode-manager-mcp/refs/heads/main/remember-new-logo-complete-white.svg">
   <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/NiclasOlofsson/mode-manager-mcp/refs/heads/main/remember-new-logo-complete-black.svg">
   <img alt="GitHub Copilot Memory Tool" src="https://raw.githubusercontent.com/NiclasOlofsson/remember-mcp-vscode/refs/heads/main/media/remember-new-logo-complete-black.png" width="800">
 </picture>
