@@ -35,3 +35,34 @@ This project creates a VS Code extension that provides a visual interface for ru
 - First, verify that the webpack watcher (`npm watch`) is running and healthy
 - Only proceed with linting if webpack is running without problems
 - This ensures build consistency and avoids redundant compilation steps
+- **2025-08-09 12:15:** VS Code Marketplace Publishing Best Practices and Workflow:
+
+DUAL README STRATEGY:
+- Keep single source README.md in GitHub with all developer content
+- Use HTML comment markers to exclude developer-only sections: <!-- MARKETPLACE-EXCLUDE-START --> and <!-- MARKETPLACE-EXCLUDE-END -->
+- Auto-generate marketplace-specific README during build process
+- Add README_marketplace.md to .gitignore (treat as build artifact, not source)
+
+ESSENTIAL PACKAGE.JSON SCRIPTS:
+- "generate-marketplace-readme": "node scripts/generate-marketplace-readme.js" (filters README)
+- "package:marketplace": "npm run bump-version && npm run generate-marketplace-readme && vsce package --readme-path README_marketplace.md"
+- "publish:marketplace": "npm run package:marketplace && vsce publish --readme-path README_marketplace.md"
+- Always use --readme-path flag to specify filtered README for packaging
+
+VSCE PUBLISHING WORKFLOW:
+1. Edit only README.md with exclusion markers around developer content
+2. Run npm run publish:marketplace (auto-bumps version, generates filtered README, packages, publishes)
+3. Never manually maintain separate README files
+4. Marketplace gets clean user-focused docs, GitHub keeps complete developer docs
+
+EXCLUSION STRATEGY:
+- Exclude: Picture logos, developer badges, detailed usage instructions, configuration details, development sections, contributing guidelines, related projects
+- Include: Core value proposition, features list, basic installation, how it works, troubleshooting, license
+- Target: ~4500-5000 chars for marketplace (down from 7000-8000 original)
+
+TECHNICAL DETAILS:
+- VSIX packages are case-insensitive (avoid filename conflicts)
+- .vscodeignore excludes files from VSIX package (not the same as .gitignore)
+- vsce prepublish script runs automatically during publishing
+- Always commit version bumps back to git after publishing
+- Marketplace URLs: https://marketplace.visualstudio.com/items?itemName=publisher.extension-name
