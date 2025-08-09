@@ -136,7 +136,7 @@
     "lint": "eslint src",
     "test": "vscode-test",
     "bump-version": "npm version patch",
-    "package:marketplace": "npm run bump-version && vsce package --readme-path README_marketplace.md",
+    "package:marketplace": "npm run bump-version && npm run generate-marketplace-readme && vsce package --readme-path README_marketplace.md",
     "publish:marketplace": "npm run package:marketplace && vsce publish --readme-path README_marketplace.md"
   },
   "devDependencies": {

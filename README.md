@@ -1,47 +1,21 @@
-<picture>[![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/nickeolofsson.remember-mcp-vscode?label=VS%20Code%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=nickeolofsson.remember-mcp-vscode)
-
 <!-- MARKETPLACE-EXCLUDE-START -->
-## 🔧 Development Status
 
-[![CI Build](https://github.com/NiclasOlofsson/remember-mcp-vscode/workflows/CI/badge.svg)](https://github.com/NiclasOlofsson/remember-mcp-vscode/actions)
-[![Tests](https://github.com/NiclasOlofsson/remember-mcp-vscode/workflows/Tests/badge.svg)](https://github.com/NiclasOlofsson/remember-mcp-vscode/actions)
-[![Coverage](https://codecov.io/gh/NiclasOlofsson/remember-mcp-vscode/branch/main/graph/badge.svg)](https://codecov.io/gh/NiclasOlofsson/remember-mcp-vscode)
-
-### 👨‍💻 For Contributors
-
-- Clone this repository: `git clone https://github.com/NiclasOlofsson/remember-mcp-vscode.git`
-- Run `npm install` to install dependencies  
-- Press `F5` to launch the extension in development mode
-- See `CONTRIBUTING.md` for detailed development guidelines
-- Run `npm test` to execute tests
-- Run `npm run lint` to check code style
-
-### 📁 Project Structure
-```
-src/
-├── extension.ts      # Main extension entry point
-├── test/            # Test files
-└── ...
-```
-
-### 🚀 Release Process
-1. Run `npm run package:marketplace` to create VSIX with marketplace README
-2. Test the VSIX locally: `code --install-extension remember-mcp-vscode-x.x.x.vsix`
-3. Run `npm run publish:marketplace` to publish to marketplace
-<!-- MARKETPLACE-EXCLUDE-END -->
-
-Welcome to **Remember MCP**, the VS Code extension that brings real, persistent memory to your AI assistant and your team. Instantly store preferences, facts, and best practices—so Copilot always knows your context, and your team's knowledge is never lost.<source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/NiclasOlofsson/mode-manager-mcp/refs/heads/main/remember-new-logo-complete-white.svg">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/NiclasOlofsson/mode-manager-mcp/refs/heads/main/remember-new-logo-complete-white.svg">
   <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/NiclasOlofsson/mode-manager-mcp/refs/heads/main/remember-new-logo-complete-black.svg">
   <img alt="GitHub Copilot Memory Tool" src="https://raw.githubusercontent.com/NiclasOlofsson/remember-mcp-vscode/refs/heads/main/media/remember-new-logo-complete-black.png" width="800">
 </picture>
 
+<!-- MARKETPLACE-EXCLUDE-END -->
 
 # Meet Remember MCP – Real Memory for VS Code & Your AI
+<!-- MARKETPLACE-EXCLUDE-START -->
 
 [![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/nickeolofsson.remember-mcp-vscode?label=VS%20Code%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=nickeolofsson.remember-mcp-vscode)
 
+<!-- MARKETPLACE-EXCLUDE-END -->
 
-Welcome to **Remember MCP**, the VS Code extension that brings real, persistent memory to your AI assistant and your team. Instantly store preferences, facts, and best practices—so Copilot always knows your context, and your team’s knowledge is never lost.
+Experience **Remember MCP**, the VS Code extension that brings real, persistent memory to your AI assistant and your team. Instantly store preferences, facts, and best practices—so Copilot always knows your context, and your team’s knowledge is never lost.
 
 Want to explore or run the Mode Manager MCP server directly? [Check out Mode Manager MCP on GitHub](https://github.com/NiclasOlofsson/mode-manager-mcp) for standalone usage, advanced memory management, and more features.
 
@@ -102,6 +76,8 @@ Remember MCP uses VS Code’s official MCP API to:
 ### How Memory is Stored & Loaded
 All memory is saved as Markdown files with YAML frontmatter—human- and machine-readable. Mode Manager MCP creates and updates these files as you add new memories. VS Code Copilot Chat loads them every turn, so your context is always active.
 
+<!-- MARKETPLACE-EXCLUDE-START -->
+
 ## Usage
 
 ### Quick Start
@@ -139,6 +115,8 @@ Configure the extension through VS Code settings (`Ctrl+,`):
 ```
 For custom installations, update the server command as needed.
 
+<!-- MARKETPLACE-EXCLUDE-END -->
+
 ## Troubleshooting
 
 ### Server Won't Register?
@@ -148,6 +126,7 @@ For custom installations, update the server command as needed.
 4. Check the Output panel for error messages
 5. Ensure VS Code 1.102.0+ (MCP API support required)
 
+<!-- MARKETPLACE-EXCLUDE-START -->
 ## Development
 
 ### Building from Source
@@ -172,6 +151,8 @@ npm run compile
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
+
+<!-- MARKETPLACE-EXCLUDE-END -->
 
 ## License
 
