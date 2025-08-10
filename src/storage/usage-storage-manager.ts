@@ -1,7 +1,7 @@
 /**
- * Enhanced storage manager for Copilot usage events
- * Implements persistent storage with VS Code globalState + file system
- * Based on architecture document specifications
+ * Simplified storage manager using unified session data service
+ * Persistent storage with VS Code globalState + file system
+ * Session-based data only - no log parsing
  */
 
 import * as vscode from 'vscode';
@@ -9,35 +9,60 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import { CopilotUsageEvent, UsageStorageIndex, CopilotUsageSettings, DEFAULT_USAGE_SETTINGS, DateRange, EventFile } from '../types/usage-events';
 import { AnalyticsQuery, AnalyticsResult } from '../types/analytics';
+import { UnifiedSessionDataService } from './unified-session-data-service';
+import { SessionScanStats } from '../types/chat-session';
+import { LogEntry } from '../scanning/copilot-log-scanner';
+import { ILogger } from '../types/logger';
+import { ServiceContainer } from '../types/service-container';
 
 export class UsageStorageManager {
     private static readonly STORAGE_KEY = 'copilot-usage-index';
     private static readonly EVENTS_DIR = 'copilot-usage/events';
+    private static readonly SESSION_SCAN_KEY = 'copilot-session-scan-stats';
     
     private context: vscode.ExtensionContext;
     private storageUri: vscode.Uri;
     private eventsDir: vscode.Uri;
     
-    constructor(context: vscode.ExtensionContext) {
+    // Unified session data service (shared instance from container)
+    private sessionDataService: UnifiedSessionDataService;
+    
+    constructor(context: vscode.ExtensionContext, logger: ILogger) {
         this.context = context;
         this.storageUri = context.globalStorageUri;
         this.eventsDir = vscode.Uri.joinPath(this.storageUri, UsageStorageManager.EVENTS_DIR);
+        
+        // Get the shared unified session data service from the service container
+        if (!ServiceContainer.isInitialized()) {
+            throw new Error('ServiceContainer must be initialized before creating UsageStorageManager');
+        }
+        
+        this.sessionDataService = ServiceContainer.getInstance().getUnifiedSessionDataService();
+        logger.appendLine('[UsageStorageManager] Using shared UnifiedSessionDataService from service container');
     }
 
     /**
-     * Initialize storage structure and load existing index
+     * Initialize storage structure and unified session data service
      */
     async initialize(): Promise<void> {
         // Ensure storage directories exist
         await vscode.workspace.fs.createDirectory(this.storageUri);
         await vscode.workspace.fs.createDirectory(this.eventsDir);
         
+        // Initialize session data service
+        await this.sessionDataService.initialize();
+        
         // Load or create storage index
         const index = await this.getStorageIndex();
-        if (index.eventFiles.length === 0) {
-            // First time setup - scan for any existing event files
-            await this.rebuildIndex();
-        }
+        
+        // Set up real-time session event updates callback (for storage)
+        this.sessionDataService.onSessionEventsUpdated(async (events) => {
+            // Store session events for persistence
+            await this.storeEvents(events);
+        });
+        
+        // Note: Log entries are for real-time feedback only, not stored persistently
+        // Components that need real-time feedback can subscribe directly to log updates
     }
 
     /**
@@ -249,6 +274,68 @@ export class UsageStorageManager {
     }
 
     /**
+     * Scan chat sessions and import events (using unified service)
+     */
+    async scanChatSessions(): Promise<{ events: CopilotUsageEvent[]; stats: SessionScanStats }> {
+        try {
+            // Use unified session data service - get session events only
+            const { sessionEvents, stats } = await this.sessionDataService.scanAllData();
+            
+            // Store events using existing infrastructure
+            if (sessionEvents.length > 0) {
+                await this.storeEvents(sessionEvents);
+            }
+            
+            // Store scan statistics
+            await this.updateSessionScanStats(stats);
+            
+            return { events: sessionEvents, stats };
+        } catch (error) {
+            throw new Error(`Session scan failed: ${error}`);
+        }
+    }
+
+    /**
+     * Start real-time session watching (delegates to unified service)
+     */
+    startSessionWatcher(): void {
+        // Already handled by unified session data service during initialization
+        // This method kept for compatibility
+    }
+
+    /**
+     * Stop real-time session watching (delegates to unified service)
+     */
+    stopSessionWatcher(): void {
+        this.sessionDataService.stopRealTimeUpdates();
+    }
+
+    /**
+     * Get session watcher status (delegates to unified service)
+     */
+    getSessionWatcherStatus(): { isWatching: boolean; callbackCount: number } {
+        const status = this.sessionDataService.getWatcherStatus();
+        return {
+            isWatching: status.isWatching,
+            callbackCount: status.sessionCallbackCount + status.logCallbackCount
+        };
+    }
+
+    /**
+     * Get the last session scan statistics
+     */
+    async getSessionScanStats(): Promise<SessionScanStats | null> {
+        return this.context.globalState.get<SessionScanStats>(UsageStorageManager.SESSION_SCAN_KEY) || null;
+    }
+
+    /**
+     * Update session scan statistics
+     */
+    private async updateSessionScanStats(stats: SessionScanStats): Promise<void> {
+        await this.context.globalState.update(UsageStorageManager.SESSION_SCAN_KEY, stats);
+    }
+
+    /**
      * Clear all stored events and analytics data (dev feature)
      */
     async clearStorage(): Promise<{ deletedFiles: number; deletedEvents: number }> {
@@ -426,5 +513,55 @@ export class UsageStorageManager {
         }
         
         return dates;
+    }
+
+    /**
+     * Get current session events from unified service (persistent data)
+     */
+    async getCurrentSessionEvents(): Promise<CopilotUsageEvent[]> {
+        return this.sessionDataService.getSessionEvents();
+    }
+
+    /**
+     * Get current log entries from unified service (real-time data)
+     */
+    async getCurrentLogEntries(): Promise<LogEntry[]> {
+        return this.sessionDataService.getLogEntries();
+    }
+
+    /**
+     * Subscribe to real-time session event updates
+     */
+    onSessionEventsUpdated(callback: (events: CopilotUsageEvent[]) => void): void {
+        this.sessionDataService.onSessionEventsUpdated(callback);
+    }
+
+    /**
+     * Subscribe to real-time log entry updates
+     */
+    onLogEntriesUpdated(callback: (entries: LogEntry[]) => void): void {
+        this.sessionDataService.onLogEntriesUpdated(callback);
+    }
+
+    /**
+     * Remove session event callback
+     */
+    removeSessionEventCallback(callback: (events: CopilotUsageEvent[]) => void): void {
+        this.sessionDataService.removeSessionEventCallback(callback);
+    }
+
+    /**
+     * Remove log entry callback
+     */
+    removeLogEventCallback(callback: (entries: LogEntry[]) => void): void {
+        this.sessionDataService.removeLogEventCallback(callback);
+    }
+
+    /**
+     * Cleanup resources and stop watchers
+     */
+    dispose(): void {
+        this.stopSessionWatcher();
+        this.sessionDataService.dispose();
     }
 }

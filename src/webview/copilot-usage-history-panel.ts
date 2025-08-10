@@ -1,23 +1,23 @@
 /**
- * Enhanced Copilot Usage History Panel with comprehensive analytics and visualization
- * Based on architecture document specifications
+ * Simplified Copilot Usage History Panel using unified session data
+ * Session-based data only - no log parsing
  */
 
 import * as vscode from 'vscode';
 import { UsageStorageManager } from '../storage/usage-storage-manager';
 import { AnalyticsEngine } from '../storage/analytics-engine';
-import { CopilotLogParser } from '../parsing/copilot-log-parser';
-import { VSCodeLogger } from '../types/logger';
 import { CopilotUsageEvent, DateRange } from '../types/usage-events';
 import { AnalyticsQuery, DashboardWidgetData } from '../types/analytics';
+import { VSCodeLogger } from '../types/logger';
 
 export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
     public static readonly viewType = 'copilot-usage-history-panel';
     
     private webviewView?: vscode.WebviewView;
     private storageManager: UsageStorageManager;
-    private logParser: CopilotLogParser;
     private updateTimer?: NodeJS.Timeout;
+    private sessionEventsCallback?: (events: CopilotUsageEvent[]) => Promise<void>;
+    private logEntriesCallback?: (logEntries: any[]) => Promise<void>;
 
     constructor(
         private readonly extensionUri: vscode.Uri,
@@ -26,16 +26,47 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
     ) {
         this.outputChannel.appendLine('=== COPILOT USAGE HISTORY PANEL: Constructor called ===');
         
-        this.storageManager = new UsageStorageManager(context);
-        this.logParser = new CopilotLogParser(new VSCodeLogger(outputChannel, context.extensionMode));
+        const logger = new VSCodeLogger(this.outputChannel);
+        this.storageManager = new UsageStorageManager(context, logger);
         
-        this.outputChannel.appendLine('=== COPILOT USAGE HISTORY PANEL: Storage manager and log parser created ===');
+        this.outputChannel.appendLine('=== COPILOT USAGE HISTORY PANEL: Storage manager created ===');
         
-        // Initialize storage
-        this.storageManager.initialize().catch(error => {
-            this.outputChannel.appendLine(`Failed to initialize storage: ${error}`);
-        });
+        // Initialize storage asynchronously and register callbacks after initialization
+        this.initializeAsync();
+    }
 
+    private async initializeAsync() {
+        try {
+            this.outputChannel.appendLine('=== COPILOT USAGE HISTORY PANEL: Starting async initialization ===');
+            
+            // Initialize storage first
+            await this.storageManager.initialize();
+            this.outputChannel.appendLine('=== COPILOT USAGE HISTORY PANEL: Storage manager initialized ===');
+
+            // Subscribe to real-time session events updates
+            this.sessionEventsCallback = async (events) => {
+                this.outputChannel.appendLine(`[PANEL CALLBACK] REAL-TIME SESSION UPDATE: Received ${events.length} session events`);
+                await this.updateWebviewContent();
+                this.outputChannel.appendLine(`[PANEL CALLBACK] REAL-TIME SESSION UPDATE: Webview updated`);
+            };
+            this.storageManager.onSessionEventsUpdated(this.sessionEventsCallback);
+            this.outputChannel.appendLine('=== COPILOT USAGE HISTORY PANEL: Session events callback registered ===');
+
+            // Subscribe to real-time log entries updates (for immediate feedback)
+            this.logEntriesCallback = async (logEntries) => {
+                this.outputChannel.appendLine(`[PANEL CALLBACK] REAL-TIME LOG UPDATE: Received ${logEntries.length} log entries`);
+                // Log entries are real-time, don't need to update webview for every entry
+                // But we could show a live indicator or update counters
+            };
+            this.storageManager.onLogEntriesUpdated(this.logEntriesCallback);
+            this.outputChannel.appendLine('=== COPILOT USAGE HISTORY PANEL: Log entries callback registered ===');
+            
+            this.outputChannel.appendLine('=== COPILOT USAGE HISTORY PANEL: Async initialization completed ===');
+        } catch (error) {
+            this.outputChannel.appendLine(`Failed to initialize storage: ${error}`);
+        }
+
+        // Set up auto-refresh
         // Set up auto-refresh
         this.setupAutoRefresh();
         
@@ -77,6 +108,9 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
                 case 'scanHistoricalLogs':
                     await this.scanHistoricalLogs();
                     break;
+                case 'scanChatSessions':
+                    await this.scanChatSessions();
+                    break;
                 case 'exportData':
                     await this.exportData(data.options);
                     break;
@@ -89,6 +123,9 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
                     break;
                 case 'updateSettings':
                     await this.updateSettings(data.settings);
+                    break;
+                case 'testCcreqProvider':
+                    await this.testCcreqProvider(data.ccreqUri);
                     break;
                 default:
                     this.outputChannel.appendLine(`[WebviewMessage] Unknown message type: ${data.type}`);
@@ -112,20 +149,20 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
     }
 
     /**
-     * Scan historical logs for usage events
+     * Scan chat sessions for usage events (replaces log scanning)
      */
     private async scanHistoricalLogs(): Promise<void> {
         try {
-            this.outputChannel.appendLine('Starting historical log scan...');
+            this.outputChannel.appendLine('Starting session data scan...');
 
             // Show progress in webview
             await this.postMessage({
                 type: 'scanProgress',
                 status: 'scanning',
-                message: 'Discovering log files...'
+                message: 'Discovering session files...'
             });
 
-            const events = await this.logParser.scanHistoricalLogs();
+            const { events } = await this.storageManager.scanChatSessions();
             
             await this.postMessage({
                 type: 'scanProgress',
@@ -134,13 +171,11 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
             });
 
             if (events.length > 0) {
-                await this.storageManager.storeEvents(events);
-                
-                this.outputChannel.appendLine(`Historical scan complete: ${events.length} events processed`);
-                vscode.window.showInformationMessage(`Processed ${events.length} historical Copilot usage events`);
+                this.outputChannel.appendLine(`Session scan complete: ${events.length} events processed`);
+                vscode.window.showInformationMessage(`Processed ${events.length} Copilot usage events from sessions`);
             } else {
-                this.outputChannel.appendLine('No historical events found');
-                vscode.window.showInformationMessage('No historical Copilot usage events found');
+                this.outputChannel.appendLine('No session events found');
+                vscode.window.showInformationMessage('No Copilot usage events found in session files');
             }
 
             await this.postMessage({
@@ -153,8 +188,63 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
             await this.updateWebviewContent();
 
         } catch (error) {
-            this.outputChannel.appendLine(`Historical scan failed: ${error}`);
-            vscode.window.showErrorMessage(`Failed to scan historical logs: ${error}`);
+            this.outputChannel.appendLine(`Session scan failed: ${error}`);
+            vscode.window.showErrorMessage(`Failed to scan session data: ${error}`);
+            
+            await this.postMessage({
+                type: 'scanProgress',
+                status: 'error',
+                error: String(error)
+            });
+        }
+    }
+
+    /**
+     * Scan chat sessions for usage events (primary method)
+     */
+    private async scanChatSessions(): Promise<void> {
+        try {
+            this.outputChannel.appendLine('Starting chat session scan...');
+
+            // Show progress in webview
+            await this.postMessage({
+                type: 'scanProgress',
+                status: 'scanning',
+                message: 'Discovering chat session files...'
+            });
+
+            const { events, stats } = await this.storageManager.scanChatSessions();
+            
+            await this.postMessage({
+                type: 'scanProgress',
+                status: 'processing',
+                message: `Processing ${events.length} events from ${stats.totalSessions} sessions...`
+            });
+
+            if (events.length > 0) {
+                this.outputChannel.appendLine(`Session scan complete: ${events.length} events from ${stats.totalSessions} sessions processed in ${stats.scanDuration}ms`);
+                vscode.window.showInformationMessage(
+                    `Processed ${events.length} Copilot usage events from ${stats.totalSessions} chat sessions`
+                );
+            } else {
+                this.outputChannel.appendLine('No chat sessions found');
+                vscode.window.showInformationMessage('No Copilot chat sessions found');
+            }
+
+            await this.postMessage({
+                type: 'scanProgress',
+                status: 'complete',
+                eventsFound: events.length,
+                sessionsFound: stats.totalSessions,
+                scanDuration: stats.scanDuration
+            });
+
+            // Refresh the webview with new data
+            await this.updateWebviewContent();
+
+        } catch (error) {
+            this.outputChannel.appendLine(`Chat session scan failed: ${error}`);
+            vscode.window.showErrorMessage(`Failed to scan chat sessions: ${error}`);
             
             await this.postMessage({
                 type: 'scanProgress',
@@ -254,6 +344,71 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
     private async updateSettings(settings: any): Promise<void> {
         await this.storageManager.updateSettings(settings);
         await this.updateWebviewContent();
+    }
+
+    /**
+     * Test ccreq file provider by attempting to open a ccreq URI
+     */
+    private async testCcreqProvider(ccreqUri: string): Promise<void> {
+        try {
+            this.outputChannel.appendLine(`[CcreqTest] Testing ccreq provider with URI: ${ccreqUri}`);
+            
+            // Parse and validate the URI
+            const uri = vscode.Uri.parse(ccreqUri);
+            this.outputChannel.appendLine(`[CcreqTest] Parsed URI - scheme: ${uri.scheme}, path: ${uri.path}`);
+            
+            if (uri.scheme !== 'ccreq') {
+                throw new Error(`Invalid scheme: expected 'ccreq', got '${uri.scheme}'`);
+            }
+            
+            // Attempt to read the document content
+            const startTime = Date.now();
+            const document = await vscode.workspace.openTextDocument(uri);
+            const loadTime = Date.now() - startTime;
+            
+            const content = document.getText();
+            const contentLength = content.length;
+            const lineCount = document.lineCount;
+            
+            this.outputChannel.appendLine(`[CcreqTest] SUCCESS - Document loaded in ${loadTime}ms`);
+            this.outputChannel.appendLine(`[CcreqTest] Content length: ${contentLength} characters`);
+            this.outputChannel.appendLine(`[CcreqTest] Line count: ${lineCount}`);
+            this.outputChannel.appendLine(`[CcreqTest] First 200 chars: ${content.substring(0, 200)}...`);
+            
+            // Open the document in markdown preview mode
+            await vscode.commands.executeCommand('markdown.showPreviewToSide', document.uri);
+            
+            this.outputChannel.appendLine(`[CcreqTest] Document opened in markdown preview`);
+            
+            // Send results to webview
+            await this.postMessage({
+                type: 'ccreqTestResult',
+                success: true,
+                uri: ccreqUri,
+                loadTime,
+                contentLength,
+                lineCount,
+                preview: content.substring(0, 500),
+                openedInEditor: true
+            });
+            
+            // Also show in VS Code
+            vscode.window.showInformationMessage(`✅ ccreq provider test successful! Loaded ${contentLength} chars in ${loadTime}ms and opened in editor`);
+            
+        } catch (error) {
+            this.outputChannel.appendLine(`[CcreqTest] ERROR: ${error}`);
+            
+            // Send error to webview
+            await this.postMessage({
+                type: 'ccreqTestResult',
+                success: false,
+                uri: ccreqUri,
+                error: String(error)
+            });
+            
+            // Also show in VS Code
+            vscode.window.showErrorMessage(`❌ ccreq provider test failed: ${error}`);
+        }
     }
 
     /**
@@ -385,7 +540,8 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
                             <option value="90d" ${settings.defaultTimeRange === '90d' ? 'selected' : ''}>Last 90 Days</option>
                         </select>
                         <button id="refreshBtn">Refresh</button>
-                        <button id="scanHistoryBtn">Scan History</button>
+                        <button id="scanSessionsBtn">Scan Sessions</button>
+                        <button id="scanHistoryBtn">Scan Sessions</button>
                         <button id="exportBtn">Export</button>
                         <button id="clearStorageBtn" class="warning-button" title="Clear all stored usage data">Clear Storage</button>
                     </div>
@@ -466,6 +622,25 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
                         <span>Storage Size: ${Math.round(storageStats.totalSizeBytes / 1024)} KB</span>
                         ${storageStats.oldestEvent ? `<span>Oldest Event: ${new Date(storageStats.oldestEvent).toLocaleDateString()}</span>` : ''}
                         ${storageStats.newestEvent ? `<span>Newest Event: ${new Date(storageStats.newestEvent).toLocaleDateString()}</span>` : ''}
+                    </div>
+                </section>
+
+                <section class="ccreq-debug">
+                    <h4>🔍 ccreq File Provider Debug</h4>
+                    <div class="ccreq-debug-content">
+                        <div class="ccreq-input-section">
+                            <label for="ccreqInput">ccreq URI:</label>
+                            <input 
+                                type="text" 
+                                id="ccreqInput" 
+                                placeholder="ccreq:95e746dc.copilotmd"
+                                value="ccreq:95e746dc.copilotmd"
+                            />
+                            <button id="testCcreqBtn">Test Provider</button>
+                        </div>
+                        <div id="ccreqResults" class="ccreq-results" style="display: none;">
+                            <div id="ccreqResultContent"></div>
+                        </div>
                     </div>
                 </section>
 
@@ -672,6 +847,90 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
                 border-radius: 2px;
             }
             
+            .ccreq-debug {
+                margin-bottom: 16px;
+                background-color: var(--vscode-sideBarSectionHeader-background);
+                border: 1px solid var(--vscode-panel-border);
+                border-radius: 4px;
+                padding: 12px;
+            }
+            
+            .ccreq-debug h4 {
+                margin: 0 0 12px 0;
+                font-size: 12px;
+                font-weight: 600;
+                color: var(--vscode-sideBarTitle-foreground);
+            }
+            
+            .ccreq-input-section {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                margin-bottom: 12px;
+                flex-wrap: wrap;
+            }
+            
+            .ccreq-input-section label {
+                font-size: 11px;
+                font-weight: 600;
+                color: var(--vscode-foreground);
+                min-width: 60px;
+            }
+            
+            .ccreq-input-section input {
+                flex: 1;
+                min-width: 200px;
+                padding: 4px 8px;
+                font-size: 11px;
+                font-family: var(--vscode-editor-font-family);
+                background-color: var(--vscode-input-background);
+                color: var(--vscode-input-foreground);
+                border: 1px solid var(--vscode-input-border);
+                border-radius: 2px;
+            }
+            
+            .ccreq-input-section input:focus {
+                outline: none;
+                border-color: var(--vscode-focusBorder);
+            }
+            
+            .ccreq-results {
+                background-color: var(--vscode-editor-background);
+                border: 1px solid var(--vscode-panel-border);
+                border-radius: 4px;
+                padding: 8px;
+                font-family: var(--vscode-editor-font-family);
+                font-size: 10px;
+                max-height: 200px;
+                overflow-y: auto;
+            }
+            
+            .ccreq-result-success {
+                color: var(--vscode-terminal-ansiGreen);
+            }
+            
+            .ccreq-result-error {
+                color: var(--vscode-errorForeground);
+            }
+            
+            .ccreq-result-info {
+                color: var(--vscode-descriptionForeground);
+                margin: 4px 0;
+            }
+            
+            .ccreq-result-preview {
+                background-color: var(--vscode-textCodeBlock-background);
+                border: 1px solid var(--vscode-textBlockQuote-border);
+                border-radius: 2px;
+                padding: 8px;
+                margin: 8px 0;
+                white-space: pre-wrap;
+                font-family: var(--vscode-editor-font-family);
+                font-size: 9px;
+                max-height: 100px;
+                overflow-y: auto;
+            }
+            
             .scan-progress {
                 position: fixed;
                 top: 50%;
@@ -740,6 +999,11 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
                 vscode.postMessage({ type: 'scanHistoricalLogs' });
             }
             
+            function scanChatSessions() {
+                document.getElementById('scanProgress').style.display = 'block';
+                vscode.postMessage({ type: 'scanChatSessions' });
+            }
+            
             function exportData() {
                 vscode.postMessage({ 
                     type: 'exportData',
@@ -753,6 +1017,56 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
             function testNotifications() {
                 console.log('Test notifications button clicked');
                 vscode.postMessage({ type: 'testNotifications' });
+            }
+            
+            function testCcreqProvider() {
+                console.log('Test ccreq provider button clicked');
+                const ccreqInput = document.getElementById('ccreqInput');
+                const ccreqUri = ccreqInput.value.trim();
+                
+                if (!ccreqUri) {
+                    showCcreqResult(false, 'Please enter a ccreq URI', null);
+                    return;
+                }
+                
+                // Show loading state
+                showCcreqResult(null, 'Testing ccreq provider...', null);
+                
+                // Send message to extension
+                vscode.postMessage({ 
+                    type: 'testCcreqProvider',
+                    ccreqUri: ccreqUri
+                });
+            }
+            
+            function showCcreqResult(success, message, data) {
+                const resultsEl = document.getElementById('ccreqResults');
+                const contentEl = document.getElementById('ccreqResultContent');
+                
+                resultsEl.style.display = 'block';
+                
+                if (success === null) {
+                    // Loading state
+                    contentEl.innerHTML = \`
+                        <div class="ccreq-result-info">⏳ \${message}</div>
+                    \`;
+                } else if (success) {
+                    // Success
+                    const editorInfo = data.openedInEditor ? '<div class="ccreq-result-info">📄 Content opened in VS Code editor</div>' : '';
+                    contentEl.innerHTML = \`
+                        <div class="ccreq-result-success">✅ \${message}</div>
+                        <div class="ccreq-result-info">Load time: \${data.loadTime}ms</div>
+                        <div class="ccreq-result-info">Content length: \${data.contentLength} characters</div>
+                        <div class="ccreq-result-info">Line count: \${data.lineCount}</div>
+                        \${editorInfo}
+                        <div class="ccreq-result-preview">\${data.preview}</div>
+                    \`;
+                } else {
+                    // Error
+                    contentEl.innerHTML = \`
+                        <div class="ccreq-result-error">❌ \${message}</div>
+                    \`;
+                }
             }
             
             function clearStorage() {
@@ -797,6 +1111,14 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
                     console.log('ERROR: scanHistoryBtn not found');
                 }
                 
+                const scanSessionsBtn = document.getElementById('scanSessionsBtn');
+                if (scanSessionsBtn) {
+                    scanSessionsBtn.addEventListener('click', scanChatSessions);
+                    console.log('Scan sessions button event listener added');
+                } else {
+                    console.log('ERROR: scanSessionsBtn not found');
+                }
+                
                 const exportBtn = document.getElementById('exportBtn');
                 if (exportBtn) {
                     exportBtn.addEventListener('click', exportData);
@@ -834,6 +1156,14 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
                     console.log('ERROR: testNotificationsBtn not found');
                 }
                 
+                const testCcreqBtn = document.getElementById('testCcreqBtn');
+                if (testCcreqBtn) {
+                    testCcreqBtn.addEventListener('click', testCcreqProvider);
+                    console.log('Test ccreq button event listener added');
+                } else {
+                    console.log('ERROR: testCcreqBtn not found');
+                }
+                
                 const retryBtn = document.getElementById('retryBtn');
                 if (retryBtn) {
                     retryBtn.addEventListener('click', function() { location.reload(); });
@@ -868,6 +1198,9 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
                     case 'scanProgress':
                         handleScanProgress(message);
                         break;
+                    case 'ccreqTestResult':
+                        handleCcreqTestResult(message);
+                        break;
                 }
             });
             
@@ -894,6 +1227,17 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
                             progressEl.style.display = 'none';
                         }, 3000);
                         break;
+                }
+            }
+            
+            function handleCcreqTestResult(message) {
+                console.log('Received ccreq test result:', message);
+                
+                if (message.success) {
+                    const openedText = message.openedInEditor ? ' (Opened in editor)' : '';
+                    showCcreqResult(true, 'ccreq provider test successful!' + openedText, message);
+                } else {
+                    showCcreqResult(false, message.error || 'Unknown error', null);
                 }
             }
             
@@ -1185,5 +1529,16 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
         if (this.updateTimer) {
             clearInterval(this.updateTimer);
         }
+        
+        // Remove event callbacks to prevent memory leaks
+        if (this.sessionEventsCallback) {
+            this.storageManager.removeSessionEventCallback(this.sessionEventsCallback);
+        }
+        if (this.logEntriesCallback) {
+            this.storageManager.removeLogEventCallback(this.logEntriesCallback);
+        }
+        
+        // Dispose storage manager resources
+        this.storageManager.dispose();
     }
 }

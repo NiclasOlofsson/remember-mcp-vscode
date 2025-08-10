@@ -138,12 +138,6 @@
           "type": "string",
           "default": "pipx run --system-site-packages --spec git+https://github.com/NiclasOlofsson/mode-manager-mcp.git mode-manager-mcp",
           "description": "Command to run the MCP server (registered with VS Code MCP system)"
-        },
-        "remember-mcp.tail.pollInterval": {
-          "type": "number",
-          "default": 10000,
-          "minimum": 1000,
-          "description": "Polling interval in milliseconds for checking the Copilot log file (default: 10000 ms = 10 seconds)"
         }
       }
     }
@@ -179,7 +173,9 @@
     "webpack-cli": "^6.0.1"
   },
   "dependencies": {
+    "async-mutex": "^0.5.0",
     "chart.js": "^4.5.0",
+    "sqlite3": "^5.1.7",
     "uuid": "^10.0.0"
   }
 }

@@ -1,12 +1,11 @@
 import * as vscode from 'vscode';
 
-import * as fs from 'fs';
-import * as path from 'path';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { CopilotUsageHistoryPanel } from './webview/copilot-usage-history-panel';
-import { CopilotLogParser } from './parsing/copilot-log-parser';
+import { UnifiedSessionDataService } from './storage/unified-session-data-service';
 import { VSCodeLogger } from './types/logger';
+import { ServiceContainer } from './types/service-container';
 
 const execAsync = promisify(exec);
 
@@ -174,125 +173,59 @@ export class RememberMcpManager {
     private statusBarItem: vscode.StatusBarItem;
     private mcpProvider: vscode.Disposable | null = null;
     public readonly usageStatsManager: UsageStatsManager;
+    private unifiedDataService?: UnifiedSessionDataService;
     
-    constructor() {
+    constructor(private context?: vscode.ExtensionContext) {
         this.outputChannel = vscode.window.createOutputChannel('Remember MCP');
         this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
         this.statusBarItem.command = 'remember-mcp.showPanel';
         this.usageStatsManager = new UsageStatsManager();
         this.updateStatusBar('stopped');
         this.statusBarItem.show();
+        
+        // Get unified data service from service container
+        if (this.context) {
+            this.initializeUnifiedDataService();
+        }
     }
 
     /**
-     * Utility: Get the Copilot Chat extension's log file path by navigating from our globalStoragePath.
-     * @param myLogDir Your extension's globalStoragePath
-     * @returns Copilot Chat log file path (if found), else null
+     * Initialize the unified data service for real-time log monitoring
+     * Uses the service container to get the shared instance
      */
-    static getCopilotChatLogPath(myLogDir: string, outputChannel?: vscode.OutputChannel): string | null {
-        // Helper for debug output
-        const debug = (msg: string, ...args: any[]) => {
-            if (outputChannel) {
-                outputChannel.appendLine('[DEBUG] ' + msg + (args.length ? ' ' + args.map(a => JSON.stringify(a)).join(' ') : ''));
-            }
-        };
-
-        // Go up one directory from our log dir to exthost, then into GitHub.copilot-chat
-        const exthostDir = path.dirname(myLogDir);
-        debug('exthostDir:', exthostDir);
-        const copilotLogDir = path.join(exthostDir, 'GitHub.copilot-chat');
-        debug('Copilot Chat log directory:', copilotLogDir);
-        if (!fs.existsSync(copilotLogDir)) {
-            debug('Copilot Chat log directory does not exist:', copilotLogDir);
-            return null;
-        }
-        // Find .log file(s)
-        const files = fs.readdirSync(copilotLogDir);
-        debug('Files in Copilot Chat log directory:', files);
-        const logFile = files.find(f => f.endsWith('.log'));
-        if (logFile) {
-            const logPath = path.join(copilotLogDir, logFile);
-            debug('Found Copilot Chat log file:', logPath);
-            return logPath;
-        } else {
-            debug('No .log file found in Copilot Chat log directory.');
-        }
-        return null;
-    }
-
-    /**
-     * Utility: Tail a file and call a callback with new lines as they are appended.
-     * Uses polling-based file watching for reliable cross-platform operation.
-     * @param filePath Path to the log file
-     * @param onLine Callback for each new line
-     * @param pollingInterval Polling interval in milliseconds (default: 1000ms)
-     * @returns Disposable to stop watching
-     */
-    static tailFile(filePath: string, onLine: (line: string) => void, pollingInterval: number = 1000): vscode.Disposable {
-        let fileSize = 0;
-        let watching = true;
-        let leftover = '';
-
-        // Initial stat
-        if (fs.existsSync(filePath)) {
-            fileSize = fs.statSync(filePath).size;
+    private async initializeUnifiedDataService(): Promise<void> {
+        if (!this.context) {
+            return;
         }
 
-        // Helper function to process file changes
-        const processFileChange = () => {
-            if (!watching || !fs.existsSync(filePath)) {
+        try {
+            // Get the shared service instance from the container
+            if (ServiceContainer.isInitialized()) {
+                this.unifiedDataService = ServiceContainer.getInstance().getUnifiedSessionDataService();
+            } else {
+                this.outputChannel.appendLine('[RememberMcpManager] WARNING: ServiceContainer not initialized, cannot get shared service');
                 return;
             }
-            const stats = fs.statSync(filePath);
-            if (stats.size > fileSize) {
-                const stream = fs.createReadStream(filePath, {
-                    start: fileSize,
-                    end: stats.size
-                });
-                stream.on('data', chunk => {
-                    const lines = (leftover + chunk.toString()).split(/\r?\n/);
-                    leftover = lines.pop() || '';
-                    for (const line of lines) {
-                        if (line.trim()) {
-                            onLine(line);
-                        }
+
+            // Subscribe to real-time log entries for usage tracking
+            this.unifiedDataService.onLogEntriesUpdated((logEntries) => {
+                // Process new log entries for model usage tracking
+                logEntries.forEach(entry => {
+                    if (entry.modelName && entry.status === 'success') {
+                        this.usageStatsManager.recordUsage(entry.modelName);
                     }
                 });
-                stream.on('end', () => {
-                    fileSize = stats.size;
-                });
-            }
-        };
+            });
 
-        // Only polling-based detection (fs.watchFile)
-        fs.watchFile(filePath, { interval: pollingInterval }, (curr, prev) => {
-            if (!watching) {
-                return;
-            }
-            // Only process if file actually changed
-            if (curr.mtime !== prev.mtime || curr.size !== prev.size) {
-                processFileChange();
-            }
-        });
-
-        return {
-            dispose: () => {
-                watching = false;
-                fs.unwatchFile(filePath);
-            }
-        };
+            // Initialize the service if not already initialized
+            await this.unifiedDataService.initialize();
+            this.outputChannel.appendLine('[RememberMcpManager] Connected to shared unified data service for usage tracking');
+        } catch (error) {
+            this.outputChannel.appendLine(`[RememberMcpManager] Failed to connect to unified data service: ${error}`);
+        }
     }
 
-    /**
-     * Extract model name from a Copilot log line
-     * @param line Log line to parse
-     * @returns Model name if found, null otherwise
-     */
-    static extractModelFromLogLine(line: string): string | null {
-        // Pattern: [info] ccreq:... copilotmd | success | MODEL_NAME | ...ms |
-        const match = line.match(/\[info\] ccreq:.*copilotmd \| success \| (.+?) \| \d+ms \|/);
-        return match ? match[1] : null;
-    }
+    // Legacy static methods removed - all log handling now done through UnifiedSessionDataService
 
     /**
      * Record a model usage in the statistics
@@ -435,6 +368,10 @@ export class RememberMcpManager {
 
     dispose(): void {
         this.stopServer();
+        if (this.unifiedDataService) {
+            this.unifiedDataService.dispose();
+        }
+        this.usageStatsManager.dispose();
         this.outputChannel.dispose();
         this.statusBarItem.dispose();
     }
@@ -471,9 +408,6 @@ export class RememberMcpPanelProvider implements vscode.WebviewViewProvider {
                     break;
                 case 'restart':
                     this.rememberManager.restartServer();
-                    break;
-                case 'tailCopilotLog':
-                    vscode.commands.executeCommand('remember-mcp.tailCopilotLog');
                     break;
                 case 'recheckPrerequisites':
                     PrerequisiteChecker.clearCache();
@@ -965,7 +899,6 @@ export class RememberMcpPanelProvider implements vscode.WebviewViewProvider {
             <button onclick="sendMessage('start')">Register Server</button>
             <button onclick="sendMessage('stop')">Unregister Server</button>
             <button onclick="sendMessage('restart')">Restart Server</button>
-            <button onclick="sendMessage('tailCopilotLog')">Tail Copilot Log</button>
             
             <div class="help">
                 Once registered, Copilot automatically discovers and uses your memory server.
@@ -1027,7 +960,7 @@ export class RememberMcpUsagePanelProvider implements vscode.WebviewViewProvider
 
         let tableRows = '';
         if (sortedStats.length === 0) {
-            tableRows = '<tr><td colspan="2" class="no-data">No usage data available<br/>Start log tailing to track usage</td></tr>';
+            tableRows = '<tr><td colspan="2" class="no-data">No usage data available<br/>Start using Copilot to track usage</td></tr>';
         } else {
             tableRows = sortedStats.map(([model, count]) => 
                 `<tr><td>${model}</td><td class="count">${count}</td></tr>`
@@ -1190,6 +1123,24 @@ export function activate(context: vscode.ExtensionContext) {
     // Show immediate debug message
     vscode.window.showInformationMessage('Remember MCP Extension Activated!');
 
+    // Initialize the service container early - this ensures single instances
+    const logger = new VSCodeLogger(vscode.window.createOutputChannel('Remember MCP Services'));
+    const serviceContainer = ServiceContainer.initialize({
+        extensionContext: context,
+        logger,
+        extensionVersion: context.extension.packageJSON.version,
+        sessionDataServiceOptions: {
+            enableRealTimeUpdates: true,
+            enableLogScanning: true,
+            debounceMs: 500
+        }
+    });
+
+    // Dispose service container when extension is deactivated
+    context.subscriptions.push({
+        dispose: () => serviceContainer.dispose()
+    });
+
     // Check prerequisites on startup
     PrerequisiteChecker.checkPrerequisites().then(prerequisites => {
         if (!prerequisites.python || !prerequisites.pipx) {
@@ -1223,8 +1174,8 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
 
-    // Create Remember MCP manager
-    const rememberManager = new RememberMcpManager();
+    // Create Remember MCP manager with context for unified data service
+    const rememberManager = new RememberMcpManager(context);
 
     // Register Copilot Usage panel provider
     const usagePanelProvider = new RememberMcpUsagePanelProvider(context.extensionUri, rememberManager);
@@ -1319,131 +1270,46 @@ export function activate(context: vscode.ExtensionContext) {
         }, 2000); // Delay to ensure VS Code is fully loaded
     }
 
-    // Track the current Copilot Chat log tail disposable and poller globally in the extension
-    let currentCopilotTail: vscode.Disposable | null = null;
-    let copilotTailOutput: vscode.OutputChannel | null = null;
-    let copilotTailPoller: NodeJS.Timeout | null = null;
-
-    // Read polling interval from settings (default 10000 ms)
-    function getTailPollInterval(): number {
-        const config = vscode.workspace.getConfiguration('remember-mcp');
-        const interval = config.get<number>('tail.pollInterval', 10000);
-        // Clamp to minimum 1000 ms for safety
-        return Math.max(1000, interval);
-    }
-
-    // Filter for Copilot model summary lines
-    function isModelSummaryLine(line: string): boolean {
-        return /\[info\] ccreq:.*copilotmd \| success \| .+ \| \d+ms \|/.test(line);
-    }
-
-    // Shared function to start tailing or polling for the log file
-    function startCopilotLogTail() {
-        if (currentCopilotTail || copilotTailPoller) {
-            // Already running
-            return;
-        }
-        const myLogDir = context.logUri.fsPath;
-        const outputChannel = rememberManager['outputChannel'] as vscode.OutputChannel;
-        let logPath = RememberMcpManager.getCopilotChatLogPath(myLogDir, outputChannel);
-        copilotTailOutput = vscode.window.createOutputChannel('Remember MCP Copilot Log');
-        copilotTailOutput.show();
-
-        function startTailing(pathToLog: string) {
-            // Log to output channel instead of showing notification
-            outputChannel.appendLine(`Starting to tail Copilot Chat log: ${pathToLog}`);
-            currentCopilotTail = RememberMcpManager.tailFile(pathToLog, line => {
-                if (copilotTailOutput && isModelSummaryLine(line)) {
-                    copilotTailOutput.appendLine(line);
-                    // Track model usage
-                    const modelName = RememberMcpManager.extractModelFromLogLine(line);
-                    if (modelName) {
-                        rememberManager.recordModelUsage(modelName);
-                    }
-                }
-            });
-        }
-
-        const pollInterval = getTailPollInterval();
-        if (logPath) {
-            startTailing(logPath);
-        } else {
-            // Log to output channel instead of showing warning notification
-            outputChannel.appendLine(`Copilot Chat log file not found. Will poll every ${pollInterval / 1000} seconds until it appears.`);
-            copilotTailPoller = setInterval(() => {
-                logPath = RememberMcpManager.getCopilotChatLogPath(myLogDir, outputChannel);
-                if (logPath) {
-                    if (copilotTailPoller) {
-                        clearInterval(copilotTailPoller);
-                        copilotTailPoller = null;
-                    }
-                    startTailing(logPath);
-                }
-            }, pollInterval);
-        }
-    }
-
-    // Manual command to start tailing
-    const tailCopilotLogCmd = vscode.commands.registerCommand('remember-mcp.tailCopilotLog', () => {
-        if (currentCopilotTail || copilotTailPoller) {
-            // Log to output channel instead of showing warning notification
-            const outputChannel = rememberManager['outputChannel'] as vscode.OutputChannel;
-            outputChannel.appendLine('Copilot Chat log is already being tailed or polling. Stop the current tail before starting a new one.');
-            if (copilotTailOutput) {
-                copilotTailOutput.show();
-            }
-            return;
-        }
-        startCopilotLogTail();
-    });
-    context.subscriptions.push(tailCopilotLogCmd);
-
-    // Automatically start tailing on extension activation
-    startCopilotLogTail();
-
-    // Add debug command to inspect log content
+    // Add debug command to inspect session content using only the unified layer
     const debugLogCommand = vscode.commands.registerCommand('remember-mcp.debugLogContent', async () => {
         const outputChannel = rememberManager['outputChannel'] as vscode.OutputChannel;
         
-        // Use the log parser
-        const parser = new CopilotLogParser(new VSCodeLogger(outputChannel, context.extensionMode));
-        
-        const logFiles = await parser.findCopilotLogs();
-        if (logFiles.length > 0) {
-            // Inspect the first few logs that have content
-            outputChannel.appendLine(`Found ${logFiles.length} log files. Inspecting first few...`);
+        try {
+            // Use the shared service instance from the container
+            const sessionService = ServiceContainer.getInstance().getUnifiedSessionDataService();
             
-            let inspected = 0;
-            for (const logFile of logFiles.slice(0, 5)) {
-                await parser.inspectLogFile(logFile, 20);
-                inspected++;
-                if (inspected >= 3) {
-                    break;
-                }
+            const { sessionEvents, logEntries, stats } = await sessionService.initialize();
+            outputChannel.appendLine(`Found ${sessionEvents.length} session events and ${logEntries.length} log entries from ${stats.totalSessions} sessions.`);
+            
+            if (sessionEvents.length > 0) {
+                outputChannel.appendLine('Sample session events:');
+                sessionEvents.slice(0, 5).forEach((event: any, index: number) => {
+                    outputChannel.appendLine(`  ${index + 1}: ${event.type} at ${event.timestamp} (${event.model || 'unknown model'})`);
+                });
+            } else {
+                outputChannel.appendLine('No session events found.');
             }
-        } else {
-            outputChannel.appendLine('No Copilot log files found.');
+            
+            if (logEntries.length > 0) {
+                outputChannel.appendLine('Sample log entries:');
+                logEntries.slice(0, 3).forEach((entry: any, index: number) => {
+                    outputChannel.appendLine(`  ${index + 1}: ${entry.status} at ${entry.timestamp} (${entry.modelName})`);
+                });
+            } else {
+                outputChannel.appendLine('No log entries found.');
+            }
+        } catch (error) {
+            outputChannel.appendLine(`Session debugging failed: ${error}`);
         }
+        // Note: No need to dispose shared service instance
     });
 
     // Add to subscriptions
     context.subscriptions.push(debugLogCommand);
     
-    // Dispose the tail and poller on deactivate
+    // Dispose usage history panel on deactivate
     context.subscriptions.push({
         dispose: () => {
-            if (currentCopilotTail) {
-                currentCopilotTail.dispose();
-            }
-            currentCopilotTail = null;
-            if (copilotTailOutput) {
-                copilotTailOutput.dispose();
-                copilotTailOutput = null;
-            }
-            if (copilotTailPoller) {
-                clearInterval(copilotTailPoller);
-                copilotTailPoller = null;
-            }
             // Dispose usage history panel
             usageHistoryPanelProvider.dispose();
         }

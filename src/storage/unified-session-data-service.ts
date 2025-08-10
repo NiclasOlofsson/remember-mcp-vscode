@@ -1,0 +1,394 @@
+/**
+ * Unified Session Data Service - Dual-stream data provider for Copilot events
+ * Provides two distinct event streams:
+ * 1. Session Events: Complete turn-based data from session JSON files  
+ * 2. Log Events: Real-time request-level data from log files
+ */
+
+import * as vscode from 'vscode';
+import { Mutex } from 'async-mutex';
+import { CopilotUsageEvent } from '../types/usage-events';
+import { ChatSessionScanner } from '../scanning/chat-session-scanner';
+import { SessionDataTransformer } from '../scanning/session-data-transformer';
+import { CopilotLogScanner, LogScanResult, LogEntry } from '../scanning/copilot-log-scanner';
+import { SessionScanResult, SessionScanStats } from '../types/chat-session';
+import { ILogger } from '../types/logger';
+
+export interface SessionDataServiceOptions {
+    enableRealTimeUpdates?: boolean;
+    enableLogScanning?: boolean;
+    debounceMs?: number;
+    extensionContext?: vscode.ExtensionContext;
+}
+
+export class UnifiedSessionDataService {
+    private sessionScanner: ChatSessionScanner;
+    private sessionTransformer: SessionDataTransformer;
+    private logScanner?: CopilotLogScanner;
+    private isWatchingEnabled = false;
+    private isInitialized = false;
+    
+    // Mutexes to prevent race conditions
+    private initializationMutex = new Mutex();
+    private scanMutex = new Mutex();
+    private sessionUpdateMutex = new Mutex();
+    
+    // Separate callback arrays for different event types
+    private sessionEventCallbacks: Array<(events: CopilotUsageEvent[]) => void> = [];
+    private logEventCallbacks: Array<(entries: LogEntry[]) => void> = [];
+    
+    // Separate caches for different data types
+    private cachedSessionEvents: CopilotUsageEvent[] = [];
+    private cachedLogEntries: LogEntry[] = [];
+    private lastScanStats?: SessionScanStats;
+
+    constructor(
+        private readonly logger: ILogger,
+        private readonly extensionVersion: string,
+        private readonly options: SessionDataServiceOptions = {}
+    ) {
+        this.sessionScanner = new ChatSessionScanner(logger, {
+            enableWatching: options.enableRealTimeUpdates ?? true,
+            debounceMs: options.debounceMs ?? 500,
+            maxRetries: 3
+        });
+        
+        this.sessionTransformer = new SessionDataTransformer(
+            logger,
+            extensionVersion
+        );
+
+        // Initialize log scanning if enabled and extension context provided
+        if (options.enableLogScanning && options.extensionContext) {
+            this.logScanner = new CopilotLogScanner(
+                logger,
+                options.extensionContext,
+                {
+                    enableWatching: options.enableRealTimeUpdates ?? true,
+                    debounceMs: options.debounceMs ?? 500,
+                    maxRetries: 3
+                }
+            );
+        }
+    }
+
+    /**
+     * Initialize the service and perform initial data scan
+     * Protected against race conditions with mutex
+     */
+    async initialize(): Promise<{ sessionEvents: CopilotUsageEvent[]; logEntries: LogEntry[]; stats: SessionScanStats }> {
+        return await this.initializationMutex.runExclusive(async () => {
+            if (this.isInitialized) {
+                this.logger.appendLine('[UnifiedSessionDataService] Already initialized, returning cached data');
+                return {
+                    sessionEvents: this.cachedSessionEvents,
+                    logEntries: this.cachedLogEntries,
+                    stats: this.lastScanStats || {
+                        totalSessions: 0,
+                        totalRequests: 0,
+                        scannedFiles: 0,
+                        errorFiles: 0,
+                        scanDuration: 0
+                    }
+                };
+            }
+
+            this.logger.appendLine('[UnifiedSessionDataService] Initializing...');
+            
+            const scanResult = await this.scanAllData();
+            
+            if (this.options.enableRealTimeUpdates) {
+                this.startRealTimeUpdates();
+            }
+            
+            this.isInitialized = true;
+            this.logger.appendLine(`[UnifiedSessionDataService] Initialized with ${scanResult.sessionEvents.length} session events, ${scanResult.logEntries.length} log entries`);
+            return scanResult;
+        });
+    }
+
+    /**
+     * Scan all session files and log files separately
+     * Protected against concurrent scans with mutex
+     */
+    async scanAllData(): Promise<{ sessionEvents: CopilotUsageEvent[]; logEntries: LogEntry[]; stats: SessionScanStats }> {
+        return await this.scanMutex.runExclusive(async () => {
+            try {
+                // Scan session files
+                const { results, stats } = await this.sessionScanner.scanAllSessions();
+                
+                // Transform session data to events
+                const sessionEvents: CopilotUsageEvent[] = [];
+                for (const sessionResult of results) {
+                    const events = await this.sessionTransformer.transformSessionToEvents(sessionResult);
+                    sessionEvents.push(...events);
+                }
+
+                // Sort session events by timestamp
+                sessionEvents.sort((a: CopilotUsageEvent, b: CopilotUsageEvent) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+                // No initial log scanning - we only watch log files for real-time events
+                let logEntries: LogEntry[] = [];
+                
+                // Cache the results separately
+                this.cachedSessionEvents = sessionEvents;
+                this.cachedLogEntries = logEntries;
+                this.lastScanStats = stats;
+                
+                this.logger.appendLine(`[UnifiedSessionDataService] Scanned ${results.length} sessions, generated ${sessionEvents.length} session events and ${logEntries.length} log entries`);
+                
+                return { sessionEvents, logEntries, stats };
+            } catch (error) {
+                this.logger.appendLine(`[UnifiedSessionDataService] Scan failed: ${error}`);
+                throw error;
+            }
+        });
+    }
+
+    /**
+     * Get current session events (complete turn-based data)
+     */
+    async getSessionEvents(forceRefresh = false): Promise<CopilotUsageEvent[]> {
+        if (forceRefresh || this.cachedSessionEvents.length === 0) {
+            const { sessionEvents } = await this.scanAllData();
+            return sessionEvents;
+        }
+        return this.cachedSessionEvents;
+    }
+
+    /**
+     * Get current log entries (real-time request-level data)
+     */
+    async getLogEntries(forceRefresh = false): Promise<LogEntry[]> {
+        if (forceRefresh || this.cachedLogEntries.length === 0) {
+            const { logEntries } = await this.scanAllData();
+            return logEntries;
+        }
+        return this.cachedLogEntries;
+    }
+
+    /**
+     * Get last scan statistics
+     */
+    getLastScanStats(): SessionScanStats | undefined {
+        return this.lastScanStats;
+    }
+
+    /**
+     * Subscribe to session event updates (complete turn-based data)
+     */
+    onSessionEventsUpdated(callback: (events: CopilotUsageEvent[]) => void): void {
+        this.sessionEventCallbacks.push(callback);
+        this.logger.appendLine(`[UnifiedSessionDataService] Session callback added - now have ${this.sessionEventCallbacks.length} callbacks`);
+    }
+
+    /**
+     * Subscribe to log entry updates (real-time request-level data)
+     */
+    onLogEntriesUpdated(callback: (entries: LogEntry[]) => void): void {
+        this.logEventCallbacks.push(callback);
+        this.logger.appendLine(`[UnifiedSessionDataService] Log callback added - now have ${this.logEventCallbacks.length} callbacks`);
+    }
+
+    /**
+     * Remove session event callback
+     */
+    removeSessionEventCallback(callback: (events: CopilotUsageEvent[]) => void): void {
+        const index = this.sessionEventCallbacks.indexOf(callback);
+        if (index > -1) {
+            this.sessionEventCallbacks.splice(index, 1);
+        }
+    }
+
+    /**
+     * Remove log entry callback
+     */
+    removeLogEventCallback(callback: (entries: LogEntry[]) => void): void {
+        const index = this.logEventCallbacks.indexOf(callback);
+        if (index > -1) {
+            this.logEventCallbacks.splice(index, 1);
+        }
+    }
+
+    /**
+     * Start real-time monitoring for session file changes
+     */
+    private startRealTimeUpdates(): void {
+        if (this.isWatchingEnabled) {
+            return;
+        }
+
+        // Start watching session files
+        this.logger.appendLine(`[UnifiedSessionDataService] Starting session file watching with ${this.sessionEventCallbacks.length} callbacks`);
+        this.sessionScanner.startWatching(async (sessionResult: SessionScanResult) => {
+            try {
+                this.logger.appendLine(`[UnifiedSessionDataService] REAL-TIME SESSION UPDATE: Received session ${sessionResult.session.sessionId}`);
+                
+                // Transform new/updated session to events
+                const newEvents = await this.sessionTransformer.transformSessionToEvents(sessionResult);
+                this.logger.appendLine(`[UnifiedSessionDataService] REAL-TIME SESSION UPDATE: Transformed to ${newEvents.length} events`);
+                
+                // Update cached session events (replace events from same session) - protected by mutex
+                await this.sessionUpdateMutex.runExclusive(async () => {
+                    const beforeCount = this.cachedSessionEvents.length;
+                    this.cachedSessionEvents = this.cachedSessionEvents.filter(
+                        (event: CopilotUsageEvent) => event.sessionId !== sessionResult.session.sessionId
+                    );
+                    this.cachedSessionEvents.push(...newEvents);
+                    
+                    // Sort by timestamp
+                    this.cachedSessionEvents.sort((a: CopilotUsageEvent, b: CopilotUsageEvent) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+                    
+                    this.logger.appendLine(`[UnifiedSessionDataService] REAL-TIME SESSION UPDATE: Cache updated from ${beforeCount} to ${this.cachedSessionEvents.length} events`);
+                });
+                
+                // Notify session event callbacks
+                this.logger.appendLine(`[UnifiedSessionDataService] REAL-TIME SESSION UPDATE: Notifying ${this.sessionEventCallbacks.length} callbacks`);
+                this.sessionEventCallbacks.forEach((callback, index) => {
+                    try {
+                        this.logger.appendLine(`[UnifiedSessionDataService] REAL-TIME SESSION UPDATE: Calling callback ${index + 1}/${this.sessionEventCallbacks.length}`);
+                        callback(this.cachedSessionEvents);
+                    } catch (error) {
+                        this.logger.appendLine(`[UnifiedSessionDataService] Session callback ${index + 1} error: ${error}`);
+                    }
+                });
+                
+                this.logger.appendLine(`[UnifiedSessionDataService] REAL-TIME SESSION UPDATE: Complete - ${newEvents.length} events from session ${sessionResult.session.sessionId}`);
+            } catch (error) {
+                this.logger.appendLine(`[UnifiedSessionDataService] Error processing session update: ${error}`);
+            }
+        });
+
+        // Start watching log files if enabled
+        if (this.logScanner) {
+            this.logger.appendLine(`[UnifiedSessionDataService] Starting log file watching with ${this.logEventCallbacks.length} callbacks`);
+            this.logScanner.onLogUpdated(async (logResult: LogScanResult) => {
+                try {
+                    this.logger.appendLine(`[UnifiedSessionDataService] REAL-TIME LOG UPDATE: Received ${logResult.logPairs.length} log pairs`);
+                    
+                    // Extract log entries from pairs and update cache
+                    const newLogEntries = logResult.logPairs.flatMap(pair => [
+                        {
+                            timestamp: pair.requestEntry.timestamp,
+                            level: pair.requestEntry.level,
+                            requestId: pair.requestEntry.requestId,
+                            modelName: pair.requestEntry.modelDeploymentId,
+                            responseTime: 0,
+                            status: 'success' as const,
+                            rawLine: pair.requestEntry.rawLine
+                        },
+                        {
+                            timestamp: pair.completionEntry.timestamp,
+                            level: pair.completionEntry.level,
+                            requestId: pair.requestId,
+                            modelName: pair.completionEntry.modelName,
+                            responseTime: pair.completionEntry.responseTime,
+                            status: pair.completionEntry.status,
+                            rawLine: pair.completionEntry.rawLine
+                        }
+                    ]);
+                    
+                    this.logger.appendLine(`[UnifiedSessionDataService] REAL-TIME LOG UPDATE: Extracted ${newLogEntries.length} log entries`);
+                    
+                    // Update cached log entries (for now, replace all - could be optimized)
+                    const beforeCount = this.cachedLogEntries.length;
+                    this.cachedLogEntries = newLogEntries;
+                    
+                    this.logger.appendLine(`[UnifiedSessionDataService] REAL-TIME LOG UPDATE: Cache updated from ${beforeCount} to ${this.cachedLogEntries.length} entries`);
+                    
+                    // Notify log entry callbacks
+                    this.logger.appendLine(`[UnifiedSessionDataService] REAL-TIME LOG UPDATE: Notifying ${this.logEventCallbacks.length} callbacks`);
+                    this.logEventCallbacks.forEach((callback, index) => {
+                        try {
+                            this.logger.appendLine(`[UnifiedSessionDataService] REAL-TIME LOG UPDATE: Calling callback ${index + 1}/${this.logEventCallbacks.length}`);
+                            callback(this.cachedLogEntries);
+                        } catch (error) {
+                            this.logger.appendLine(`[UnifiedSessionDataService] Log callback ${index + 1} error: ${error}`);
+                        }
+                    });
+                    
+                    this.logger.appendLine(`[UnifiedSessionDataService] REAL-TIME LOG UPDATE: Complete - ${newLogEntries.length} entries from ${logResult.logPairs.length} pairs`);
+                } catch (error) {
+                    this.logger.appendLine(`[UnifiedSessionDataService] Error processing log update: ${error}`);
+                }
+            });
+
+            this.logScanner.startWatching();
+        }
+
+        this.isWatchingEnabled = true;
+        this.logger.appendLine('[UnifiedSessionDataService] Real-time updates enabled');
+    }
+
+    /**
+     * Stop real-time monitoring
+     */
+    stopRealTimeUpdates(): void {
+        if (!this.isWatchingEnabled) {
+            return;
+        }
+
+        this.sessionScanner.stopWatching();
+        if (this.logScanner) {
+            this.logScanner.stopWatching();
+        }
+        this.isWatchingEnabled = false;
+        this.logger.appendLine('[UnifiedSessionDataService] Real-time updates disabled');
+    }
+
+    /**
+     * Get watcher status
+     */
+    getWatcherStatus(): { 
+        isWatching: boolean; 
+        sessionCallbackCount: number; 
+        logCallbackCount: number;
+    } {
+        return {
+            isWatching: this.isWatchingEnabled,
+            sessionCallbackCount: this.sessionEventCallbacks.length,
+            logCallbackCount: this.logEventCallbacks.length
+        };
+    }
+
+    /**
+     * Force refresh current session events (useful for testing)
+     */
+    async refreshSessionEvents(): Promise<CopilotUsageEvent[]> {
+        return this.getSessionEvents(true);
+    }
+
+    /**
+     * Force refresh current log entries (useful for testing)
+     */
+    async refreshLogEntries(): Promise<LogEntry[]> {
+        return this.getLogEntries(true);
+    }
+
+    /**
+     * Clean up resources
+     */
+    dispose(): void {
+        this.stopRealTimeUpdates();
+        this.sessionEventCallbacks = [];
+        this.logEventCallbacks = [];
+        this.sessionScanner.dispose();
+        if (this.logScanner) {
+            this.logScanner.dispose();
+        }
+        this.isInitialized = false;
+        this.logger.appendLine('[UnifiedSessionDataService] Disposed');
+    }
+
+    /**
+     * Reset initialization state (for testing/debugging)
+     * Protected against race conditions with mutex
+     */
+    async resetInitialization(): Promise<void> {
+        await this.initializationMutex.runExclusive(async () => {
+            this.isInitialized = false;
+            this.stopRealTimeUpdates();
+            this.logger.appendLine('[UnifiedSessionDataService] Initialization state reset');
+        });
+    }
+}

@@ -17,7 +17,7 @@ export class VSCodeLogger implements ILogger {
     private hasShownChannel = false;
     
     constructor(
-        private readonly outputChannel: any,
+        private readonly outputChannel: vscode.OutputChannel,
         private readonly extensionMode: vscode.ExtensionMode = vscode.ExtensionMode.Production
     ) { }
 
