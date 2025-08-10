@@ -266,29 +266,18 @@ export class UnifiedSessionDataService {
                 try {
                     this.logger.appendLine(`[UnifiedSessionDataService] REAL-TIME LOG UPDATE: Received ${logResult.logPairs.length} log pairs`);
                     
-                    // Extract log entries from pairs and update cache
-                    const newLogEntries = logResult.logPairs.flatMap(pair => [
-                        {
-                            timestamp: pair.requestEntry.timestamp,
-                            level: pair.requestEntry.level,
-                            requestId: pair.requestEntry.requestId,
-                            modelName: pair.requestEntry.modelDeploymentId,
-                            responseTime: 0,
-                            status: 'success' as const,
-                            rawLine: pair.requestEntry.rawLine
-                        },
-                        {
-                            timestamp: pair.completionEntry.timestamp,
-                            level: pair.completionEntry.level,
-                            requestId: pair.requestId,
-                            modelName: pair.completionEntry.modelName,
-                            responseTime: pair.completionEntry.responseTime,
-                            status: pair.completionEntry.status,
-                            rawLine: pair.completionEntry.rawLine
-                        }
-                    ]);
+                    // Extract simple log entries from completion events only
+                    const newLogEntries: LogEntry[] = logResult.logPairs.map(pair => ({
+                        timestamp: pair.completionEntry.timestamp,
+                        level: pair.completionEntry.level,
+                        requestId: pair.requestId,
+                        modelName: pair.completionEntry.modelName,
+                        responseTime: pair.completionEntry.responseTime,
+                        status: pair.completionEntry.status,
+                        rawLine: pair.completionEntry.rawLine
+                    }));
                     
-                    this.logger.appendLine(`[UnifiedSessionDataService] REAL-TIME LOG UPDATE: Extracted ${newLogEntries.length} log entries`);
+                    this.logger.appendLine(`[UnifiedSessionDataService] REAL-TIME LOG UPDATE: Created ${newLogEntries.length} simple log events`);
                     
                     // Update cached log entries (for now, replace all - could be optimized)
                     const beforeCount = this.cachedLogEntries.length;
