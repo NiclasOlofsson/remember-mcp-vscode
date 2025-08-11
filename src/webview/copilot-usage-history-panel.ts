@@ -12,7 +12,7 @@ import { VSCodeLogger } from '../types/logger';
 
 export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
     public static readonly viewType = 'copilot-usage-history-panel';
-    
+
     private webviewView?: vscode.WebviewView;
     private storageManager: UsageStorageManager;
     private updateTimer?: NodeJS.Timeout;
@@ -24,24 +24,17 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
         private readonly context: vscode.ExtensionContext,
         private readonly outputChannel: vscode.OutputChannel
     ) {
-        this.outputChannel.appendLine('=== COPILOT USAGE HISTORY PANEL: Constructor called ===');
-        
         const logger = new VSCodeLogger(this.outputChannel);
         this.storageManager = new UsageStorageManager(context, logger);
-        
-        this.outputChannel.appendLine('=== COPILOT USAGE HISTORY PANEL: Storage manager created ===');
-        
+
         // Initialize storage asynchronously and register callbacks after initialization
         this.initializeAsync();
     }
 
     private async initializeAsync() {
         try {
-            this.outputChannel.appendLine('=== COPILOT USAGE HISTORY PANEL: Starting async initialization ===');
-            
             // Initialize storage first
             await this.storageManager.initialize();
-            this.outputChannel.appendLine('=== COPILOT USAGE HISTORY PANEL: Storage manager initialized ===');
 
             // Subscribe to real-time session events updates
             this.sessionEventsCallback = async (events) => {
@@ -50,7 +43,6 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
                 this.outputChannel.appendLine(`[PANEL CALLBACK] REAL-TIME SESSION UPDATE: Webview updated`);
             };
             this.storageManager.onSessionEventsUpdated(this.sessionEventsCallback);
-            this.outputChannel.appendLine('=== COPILOT USAGE HISTORY PANEL: Session events callback registered ===');
 
             // Subscribe to real-time log entries updates (for immediate feedback)
             this.logEntriesCallback = async (logEntries) => {
@@ -59,9 +51,6 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
                 // But we could show a live indicator or update counters
             };
             this.storageManager.onLogEntriesUpdated(this.logEntriesCallback);
-            this.outputChannel.appendLine('=== COPILOT USAGE HISTORY PANEL: Log entries callback registered ===');
-            
-            this.outputChannel.appendLine('=== COPILOT USAGE HISTORY PANEL: Async initialization completed ===');
         } catch (error) {
             this.outputChannel.appendLine(`Failed to initialize storage: ${error}`);
         }
@@ -69,8 +58,6 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
         // Set up auto-refresh
         // Set up auto-refresh
         this.setupAutoRefresh();
-        
-        this.outputChannel.appendLine('=== COPILOT USAGE HISTORY PANEL: Constructor completed ===');
     }
 
     public resolveWebviewView(
@@ -78,8 +65,6 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
         _context: vscode.WebviewViewResolveContext,
         _token: vscode.CancellationToken,
     ) {
-        this.outputChannel.appendLine('=== WEBVIEW: resolveWebviewView called ===');
-        
         this.webviewView = webviewView;
 
         webviewView.webview.options = {
@@ -87,50 +72,11 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
             localResourceRoots: [this.extensionUri]
         };
 
-        this.outputChannel.appendLine('=== WEBVIEW: Webview options set, about to load content ===');
-
         // Load initial content
         this.updateWebviewContent();
-        
-        this.outputChannel.appendLine('=== WEBVIEW: Content loaded, setting up message handler ===');
 
         // Handle messages from webview
-        webviewView.webview.onDidReceiveMessage(async data => {
-            this.outputChannel.appendLine(`[WebviewMessage] Received: ${JSON.stringify(data)}`);
-            
-            // Also try showing a popup to confirm message reception
-            vscode.window.showInformationMessage(`Webview message received: ${data.type}`);
-            
-            switch (data.type) {
-                case 'refresh':
-                    await this.refreshData();
-                    break;
-                case 'scanHistoricalLogs':
-                    await this.scanHistoricalLogs();
-                    break;
-                case 'scanChatSessions':
-                    await this.scanChatSessions();
-                    break;
-                case 'exportData':
-                    await this.exportData(data.options);
-                    break;
-                case 'updateTimeRange':
-                    await this.updateTimeRange(data.timeRange);
-                    break;
-                case 'clearData':
-                    this.outputChannel.appendLine('[WebviewMessage] Processing clearData request');
-                    await this.clearData();
-                    break;
-                case 'updateSettings':
-                    await this.updateSettings(data.settings);
-                    break;
-                case 'testCcreqProvider':
-                    await this.testCcreqProvider(data.ccreqUri);
-                    break;
-                default:
-                    this.outputChannel.appendLine(`[WebviewMessage] Unknown message type: ${data.type}`);
-            }
-        });
+        webviewView.webview.onDidReceiveMessage(async data => await this.onDidReceiveMessage(data));
 
         // Clean up when webview is disposed
         webviewView.onDidDispose(() => {
@@ -140,63 +86,49 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
         });
     }
 
+    private async onDidReceiveMessage(data: any) {
+        this.outputChannel.appendLine(`[WebviewMessage] Received: ${JSON.stringify(data)}`);
+
+        // Also try showing a popup to confirm message reception
+        vscode.window.showInformationMessage(`Webview message received: ${data.type}`);
+
+        switch (data.type) {
+            case 'refresh':
+                await this.refreshData();
+                break;
+            case 'scanHistoricalLogs':
+                await this.scanChatSessions();
+                break;
+            case 'scanChatSessions':
+                await this.scanChatSessions();
+                break;
+            case 'exportData':
+                await this.exportData(data.options);
+                break;
+            case 'updateTimeRange':
+                await this.updateTimeRange(data.timeRange);
+                break;
+            case 'clearData':
+                this.outputChannel.appendLine('[WebviewMessage] Processing clearData request');
+                await this.clearData();
+                break;
+            case 'updateSettings':
+                await this.updateSettings(data.settings);
+                break;
+            case 'testCcreqProvider':
+                await this.testCcreqProvider(data.ccreqUri);
+                break;
+            default:
+                this.outputChannel.appendLine(`[WebviewMessage] Unknown message type: ${data.type}`);
+        }
+    }
+
     /**
      * Refresh data and update webview
      */
     private async refreshData(): Promise<void> {
         await this.updateWebviewContent();
         this.outputChannel.appendLine('Copilot usage data refreshed');
-    }
-
-    /**
-     * Scan chat sessions for usage events (replaces log scanning)
-     */
-    private async scanHistoricalLogs(): Promise<void> {
-        try {
-            this.outputChannel.appendLine('Starting session data scan...');
-
-            // Show progress in webview
-            await this.postMessage({
-                type: 'scanProgress',
-                status: 'scanning',
-                message: 'Discovering session files...'
-            });
-
-            const { events } = await this.storageManager.scanChatSessions();
-            
-            await this.postMessage({
-                type: 'scanProgress',
-                status: 'processing',
-                message: `Processing ${events.length} events...`
-            });
-
-            if (events.length > 0) {
-                this.outputChannel.appendLine(`Session scan complete: ${events.length} events processed`);
-                vscode.window.showInformationMessage(`Processed ${events.length} Copilot usage events from sessions`);
-            } else {
-                this.outputChannel.appendLine('No session events found');
-                vscode.window.showInformationMessage('No Copilot usage events found in session files');
-            }
-
-            await this.postMessage({
-                type: 'scanProgress',
-                status: 'complete',
-                eventsFound: events.length
-            });
-
-            // Refresh the webview with new data
-            await this.updateWebviewContent();
-
-        } catch (error) {
-            this.outputChannel.appendLine(`Session scan failed: ${error}`);
-            vscode.window.showErrorMessage(`Failed to scan session data: ${error}`);
-            
-            await this.postMessage({
-                type: 'scanProgress',
-                status: 'error',
-                error: String(error)
-            });
-        }
     }
 
     /**
@@ -214,7 +146,7 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
             });
 
             const { events, stats } = await this.storageManager.scanChatSessions();
-            
+
             await this.postMessage({
                 type: 'scanProgress',
                 status: 'processing',
@@ -245,7 +177,7 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
         } catch (error) {
             this.outputChannel.appendLine(`Chat session scan failed: ${error}`);
             vscode.window.showErrorMessage(`Failed to scan chat sessions: ${error}`);
-            
+
             await this.postMessage({
                 type: 'scanProgress',
                 status: 'error',
@@ -309,7 +241,7 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
      */
     private async clearData(): Promise<void> {
         this.outputChannel.appendLine('[ClearData] Starting clearData method');
-        
+
         // Show confirmation dialog using VS Code's native modal
         const confirmation = await vscode.window.showWarningMessage(
             'Are you sure you want to clear all Copilot usage data? This action cannot be undone.',
@@ -324,10 +256,10 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
                 this.outputChannel.appendLine('[ClearData] Calling storageManager.clearStorage()');
                 const result = await this.storageManager.clearStorage();
                 this.outputChannel.appendLine(`[ClearData] Storage cleared successfully: ${JSON.stringify(result)}`);
-                
+
                 // Show success notification
                 vscode.window.showInformationMessage(`✅ Usage data cleared: ${result.deletedFiles} files, ${result.deletedEvents} events`);
-                
+
                 await this.updateWebviewContent();
             } catch (error) {
                 this.outputChannel.appendLine(`[ClearData] Error clearing storage: ${error}`);
@@ -352,34 +284,34 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
     private async testCcreqProvider(ccreqUri: string): Promise<void> {
         try {
             this.outputChannel.appendLine(`[CcreqTest] Testing ccreq provider with URI: ${ccreqUri}`);
-            
+
             // Parse and validate the URI
             const uri = vscode.Uri.parse(ccreqUri);
             this.outputChannel.appendLine(`[CcreqTest] Parsed URI - scheme: ${uri.scheme}, path: ${uri.path}`);
-            
+
             if (uri.scheme !== 'ccreq') {
                 throw new Error(`Invalid scheme: expected 'ccreq', got '${uri.scheme}'`);
             }
-            
+
             // Attempt to read the document content
             const startTime = Date.now();
             const document = await vscode.workspace.openTextDocument(uri);
             const loadTime = Date.now() - startTime;
-            
+
             const content = document.getText();
             const contentLength = content.length;
             const lineCount = document.lineCount;
-            
+
             this.outputChannel.appendLine(`[CcreqTest] SUCCESS - Document loaded in ${loadTime}ms`);
             this.outputChannel.appendLine(`[CcreqTest] Content length: ${contentLength} characters`);
             this.outputChannel.appendLine(`[CcreqTest] Line count: ${lineCount}`);
             this.outputChannel.appendLine(`[CcreqTest] First 200 chars: ${content.substring(0, 200)}...`);
-            
+
             // Open the document in markdown preview mode
             await vscode.commands.executeCommand('markdown.showPreviewToSide', document.uri);
-            
+
             this.outputChannel.appendLine(`[CcreqTest] Document opened in markdown preview`);
-            
+
             // Send results to webview
             await this.postMessage({
                 type: 'ccreqTestResult',
@@ -391,13 +323,13 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
                 preview: content.substring(0, 500),
                 openedInEditor: true
             });
-            
+
             // Also show in VS Code
             vscode.window.showInformationMessage(`✅ ccreq provider test successful! Loaded ${contentLength} chars in ${loadTime}ms and opened in editor`);
-            
+
         } catch (error) {
             this.outputChannel.appendLine(`[CcreqTest] ERROR: ${error}`);
-            
+
             // Send error to webview
             await this.postMessage({
                 type: 'ccreqTestResult',
@@ -405,7 +337,7 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
                 uri: ccreqUri,
                 error: String(error)
             });
-            
+
             // Also show in VS Code
             vscode.window.showErrorMessage(`❌ ccreq provider test failed: ${error}`);
         }
@@ -432,9 +364,9 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
             const settings = await this.storageManager.getSettings();
             const dateRange = this.getDateRangeForTimespan(settings.defaultTimeRange);
             const events = await this.storageManager.getEventsForDateRange(dateRange);
-            
+
             this.outputChannel.appendLine(`[UpdateWebview] Found ${events.length} events for date range ${dateRange.start.toISOString()} to ${dateRange.end.toISOString()}`);
-            
+
             const dashboardData = AnalyticsEngine.calculateQuickStats(events);
             const analytics = this.calculateAnalytics(events, dateRange);
             const storageStats = await this.storageManager.getStorageStats();
@@ -464,7 +396,7 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
     private getDateRangeForTimespan(timespan: '7d' | '30d' | '90d'): DateRange {
         const end = new Date();
         const start = new Date();
-        
+
         switch (timespan) {
             case '7d':
                 start.setDate(start.getDate() - 7);
@@ -476,7 +408,7 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
                 start.setDate(start.getDate() - 90);
                 break;
         }
-        
+
         return { start, end };
     }
 
@@ -512,11 +444,11 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
         if (!this.webviewView) {
             return 'Webview not available';
         }
-        
+
         const chartJsUri = this.webviewView.webview.asWebviewUri(
             vscode.Uri.joinPath(this.extensionUri, 'node_modules', 'chart.js', 'dist', 'chart.umd.min.js')
         );
-        
+
         return `<!DOCTYPE html>
         <html lang="en">
         <head>
@@ -592,24 +524,24 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
                         <div class="analytics-card">
                             <h4>Top Languages</h4>
                             <div class="list">
-                                ${analytics.languageMetrics.slice(0, 5).map((lang: any) => 
-                                    `<div class="list-item">
+                                ${analytics.languageMetrics.slice(0, 5).map((lang: any) =>
+            `<div class="list-item">
                                         <span>${lang.language}</span>
                                         <span>${lang.eventCount}</span>
                                     </div>`
-                                ).join('')}
+        ).join('')}
                             </div>
                         </div>
                         
                         <div class="analytics-card">
                             <h4>Top Models</h4>
                             <div class="list">
-                                ${analytics.modelMetrics.slice(0, 5).map((model: any) => 
-                                    `<div class="list-item">
+                                ${analytics.modelMetrics.slice(0, 5).map((model: any) =>
+            `<div class="list-item">
                                         <span>${model.model}</span>
                                         <span>${model.eventCount}</span>
                                     </div>`
-                                ).join('')}
+        ).join('')}
                             </div>
                         </div>
                     </div>
@@ -976,7 +908,7 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
             eventTypeDistribution: analytics.eventTypeDistribution || [],
             languageMetrics: analytics.languageMetrics || []
         };
-        
+
         return `
             const vscode = acquireVsCodeApi();
             
@@ -1529,7 +1461,7 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
         if (this.updateTimer) {
             clearInterval(this.updateTimer);
         }
-        
+
         // Remove event callbacks to prevent memory leaks
         if (this.sessionEventsCallback) {
             this.storageManager.removeSessionEventCallback(this.sessionEventsCallback);
@@ -1537,7 +1469,7 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
         if (this.logEntriesCallback) {
             this.storageManager.removeLogEventCallback(this.logEntriesCallback);
         }
-        
+
         // Dispose storage manager resources
         this.storageManager.dispose();
     }

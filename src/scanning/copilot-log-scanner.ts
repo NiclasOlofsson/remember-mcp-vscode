@@ -4,6 +4,7 @@
  */
 
 import * as vscode from 'vscode';
+import { ForceFileWatcher } from '../util/force-file-watcher';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { ILogger } from '../types/logger';
@@ -16,12 +17,12 @@ export interface LogScanResult {
 export interface LogEntryPair {
     requestEntry: LogRequestEntry;
     completionEntry: LogCompletionEntry;
-    timestamp: string;
+    timestamp: Date;
     requestId: string;
 }
 
 export interface LogRequestEntry {
-    timestamp: string;
+    timestamp: Date;
     level: string;
     requestId: string;
     modelDeploymentId: string;
@@ -29,7 +30,7 @@ export interface LogRequestEntry {
 }
 
 export interface LogCompletionEntry {
-    timestamp: string;
+    timestamp: Date;
     level: string;
     requestRef: string;
     modelName: string;
@@ -40,20 +41,23 @@ export interface LogCompletionEntry {
 }
 
 export interface LogEntry {
-    timestamp: string;
+    timestamp: Date;
     level: string;
     requestId: string;
     modelName: string;
     responseTime: number;
     status: 'success' | 'error';
     rawLine: string;
+    finishReason?: string; // From multi-line parsing
+    context?: string; // From multi-line parsing
+    ccreqId?: string; // From multi-line parsing
 }
 
 export interface LogScanStats {
     totalLines: number;
     parsedPairs: number;
     errorCount: number;
-    lastScanTime: string;
+    lastScanTime: Date;
     logFilePath: string | null;
 }
 
@@ -61,6 +65,8 @@ export interface LogScannerOptions {
     enableWatching?: boolean;
     debounceMs?: number;
     maxRetries?: number;
+    forceFlushIntervalMs?: number; // Periodic check to force detection of delayed writes
+    enableForceFlush?: boolean; // Enable periodic file checks to catch delayed writes
 }
 
 export class CopilotLogScanner {
@@ -69,13 +75,39 @@ export class CopilotLogScanner {
     // 2025-08-10 15:15:27.395 [info] Latest entry: ccreq:latestrequest.copilotmd
     private static readonly LOG_PATTERN = /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}) \[(\w+)\] (?:Latest entry: )?ccreq:([^|.\s]+)(?:\.copilotmd)?(?:\s*\|\s*(.+))?/;
     
-    private watcher?: vscode.FileSystemWatcher;
+    // Multi-line pattern to capture 3-line request sequences:
+    // Line 1: message X returned. finish reason: [reason]
+    // Line 2: request done: requestId: [id] model deployment ID: [id]
+    // Line 3: ccreq:id | status | model | duration | [context]
+    private static readonly MULTILINE_REQUEST_PATTERN = new RegExp(
+        // Line 1: message returned with finish reason
+        `(\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\\.\\d{3}) \\[info\\] message \\d+ returned\\. finish reason: \\[([^\\]]+)\\]\\s*` +
+        // Line 2: request done with requestId
+        `(\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\\.\\d{3}) \\[info\\] request done: requestId: \\[([^\\]]+)\\] model deployment ID: \\[([^\\]]*)\\]\\s*` +
+        // Line 3: ccreq with model info
+        `(\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\\.\\d{3}) \\[info\\] ccreq:([^|.\\s]+)(?:\\.copilotmd)?\\s*\\|\\s*([^|]+)\\s*\\|\\s*([^|]+)\\s*\\|\\s*([^|]+)\\s*\\|\\s*\\[([^\\]]+)\\]`,
+        'g'
+    );
+
+    /**
+     * Parse timestamp from VS Code log format: "2025-08-10 15:15:27.396"
+     * Returns a proper Date object
+     */
+    private static parseTimestamp(timestampStr: string): Date {
+        // The format is: YYYY-MM-DD HH:mm:ss.SSS
+        // Convert to ISO format by adding 'T' and 'Z': YYYY-MM-DDTHH:mm:ss.SSSZ
+        const isoString = timestampStr.replace(' ', 'T') + 'Z';
+        return new Date(isoString);
+    }
+    
+    private watcher?: ForceFileWatcher;
     private callbacks: Array<(result: LogScanResult) => void> = [];
     private isWatching = false;
     private options: LogScannerOptions;
     private extensionContext?: vscode.ExtensionContext;
     private lastFilePosition: number = 0;
     private currentLogPath: string | null = null;
+    private forceFlushTimer?: NodeJS.Timeout; // Timer for periodic file checks
 
     constructor(
         private readonly logger: ILogger,
@@ -87,6 +119,8 @@ export class CopilotLogScanner {
             enableWatching: options.enableWatching ?? false,
             debounceMs: options.debounceMs ?? 500,
             maxRetries: options.maxRetries ?? 3,
+            forceFlushIntervalMs: options.forceFlushIntervalMs ?? 1000, // Check every 1 second by default
+            enableForceFlush: options.enableForceFlush ?? true, // Enable by default to catch delayed writes
             ...options
         };
     }
@@ -183,6 +217,27 @@ export class CopilotLogScanner {
     }
 
     /**
+     * Force check for new content by directly accessing the file
+     * This bypasses filesystem watcher delays and catches buffered writes
+     */
+    private async forceFlushCheck(): Promise<void> {
+        if (!this.currentLogPath) {
+            return;
+        }
+
+        try {
+            const result = await this.scanLogFile(this.currentLogPath);
+            
+            if (result.logPairs.length > 0) {
+                this.logger.appendLine(`[CopilotLogScanner] FORCE-FLUSH: Found ${result.logPairs.length} delayed entries, notifying callbacks`);
+                this.notifyCallbacks(result);
+            }
+        } catch (error) {
+            this.logger.appendLine(`[CopilotLogScanner] FORCE-FLUSH ERROR: ${error}`);
+        }
+    }
+
+    /**
      * Initialize file position to current end of file for incremental scanning
      */
     private async initializeFilePosition(logPath: string): Promise<void> {
@@ -211,7 +266,7 @@ export class CopilotLogScanner {
                     totalLines: 0,
                     parsedPairs: 0,
                     errorCount: 1,
-                    lastScanTime: new Date().toISOString(),
+                    lastScanTime: new Date(),
                     logFilePath: null
                 }
             };
@@ -224,18 +279,16 @@ export class CopilotLogScanner {
 
         try {
             // Always use incremental scanning - read only new content
-            this.logger.appendLine(`[CopilotLogScanner] Incremental scan - reading new content: ${actualLogPath}`);
             const content = await this.readNewContent(actualLogPath);
             
             if (!content.trim()) {
-                this.logger.appendLine(`[CopilotLogScanner] No new content found`);
                 return {
                     logPairs: [],
                     scanStats: {
                         totalLines: 0,
                         parsedPairs: 0,
                         errorCount: 0,
-                        lastScanTime: new Date().toISOString(),
+                        lastScanTime: new Date(),
                         logFilePath: actualLogPath
                     }
                 };
@@ -247,11 +300,39 @@ export class CopilotLogScanner {
 
             this.logger.appendLine(`[CopilotLogScanner] Processing ${lines.length} new lines`);
 
+            // First, try multi-line parsing for complete 3-line request sequences
+            const multiLineMatches = this.parseMultiLineRequests(content);
+            this.logger.appendLine(`[CopilotLogScanner] Found ${multiLineMatches.length} complete 3-line request sequences`);
+            
+            // Log detailed information about each multi-line match
+            multiLineMatches.forEach((entry: LogEntry, index: number) => {
+                this.logger.appendLine(`[CopilotLogScanner] Multi-line match ${index + 1}:`);
+                this.logger.appendLine(`  Timestamp: ${entry.timestamp.toISOString()} (${entry.timestamp.toLocaleString()})`);
+                this.logger.appendLine(`  Request ID: ${entry.requestId}`);
+                this.logger.appendLine(`  ccreq ID: ${entry.ccreqId || 'N/A'}`);
+                this.logger.appendLine(`  Finish Reason: ${entry.finishReason || 'N/A'}`);
+                this.logger.appendLine(`  Model: ${entry.modelName}`);
+                this.logger.appendLine(`  Duration: ${entry.responseTime}ms`);
+                this.logger.appendLine(`  Context: ${entry.context || 'N/A'}`);
+                this.logger.appendLine(`  Status: ${entry.status}`);
+                logEntries.push(entry);
+            });
+
+            // Fallback to single-line parsing for any remaining relevant lines
             for (const line of lines) {
                 if (this.isRelevantLine(line)) {
                     const entry = this.parseLogLine(line);
                     if (entry) {
-                        logEntries.push(entry);
+                        // Check if this entry was already captured by multi-line parsing
+                        const alreadyCaptured = multiLineMatches.some((mlEntry: LogEntry) => 
+                            mlEntry.requestId === entry.requestId || 
+                            (mlEntry.timestamp === entry.timestamp && mlEntry.modelName === entry.modelName)
+                        );
+                        
+                        if (!alreadyCaptured) {
+                            this.logger.appendLine(`[CopilotLogScanner] Single-line fallback entry: ${entry.requestId} at ${entry.timestamp.toISOString()}`);
+                            logEntries.push(entry);
+                        }
                     } else {
                         errorCount++;
                     }
@@ -262,11 +343,11 @@ export class CopilotLogScanner {
                 totalLines: lines.length,
                 parsedPairs: logEntries.length,
                 errorCount,
-                lastScanTime: new Date().toISOString(),
+                lastScanTime: new Date(),
                 logFilePath: actualLogPath
             };
 
-            this.logger.appendLine(`[CopilotLogScanner] Found ${logEntries.length} new entries`);
+            this.logger.appendLine(`[CopilotLogScanner] Found ${logEntries.length} new entries (${multiLineMatches.length} multi-line, ${logEntries.length - multiLineMatches.length} single-line)`);
             
             // Convert individual entries to pairs for compatibility
             const logPairs: LogEntryPair[] = logEntries.map(entry => ({
@@ -284,7 +365,7 @@ export class CopilotLogScanner {
                     modelName: entry.modelName,
                     responseTime: entry.responseTime,
                     status: entry.status,
-                    context: '', // Not available from current parsing
+                    context: entry.context || '', // Use context from multi-line parsing
                     rawLine: entry.rawLine
                 },
                 timestamp: entry.timestamp,
@@ -296,6 +377,52 @@ export class CopilotLogScanner {
             this.logger.appendLine(`[CopilotLogScanner] Error reading log file: ${error}`);
             throw error;
         }
+    }
+
+    /**
+     * Parse multi-line request sequences from log content
+     * Captures 3-line patterns: finish reason, request done, ccreq info
+     */
+    private parseMultiLineRequests(content: string): LogEntry[] {
+        const entries: LogEntry[] = [];
+        
+        let match;
+        while ((match = CopilotLogScanner.MULTILINE_REQUEST_PATTERN.exec(content)) !== null) {
+            const [
+                fullMatch,
+                timestamp1, finishReason,
+                timestamp2, requestId, modelDeploymentId,
+                timestamp3, ccreqId, status, modelName, duration, context
+            ] = match;
+            
+            try {
+                // Use the latest timestamp (from ccreq line)
+                const parsedTimestamp = CopilotLogScanner.parseTimestamp(timestamp3);
+                
+                // Extract response time from duration string (e.g., "12862ms")
+                const timingMatch = duration.match(/(\d+)ms/);
+                const responseTime = timingMatch ? parseInt(timingMatch[1], 10) : 0;
+                
+                const entry: LogEntry = {
+                    timestamp: parsedTimestamp,
+                    level: 'info',
+                    requestId: requestId.trim(),
+                    modelName: modelName.trim(),
+                    responseTime,
+                    status: status.trim() === 'error' ? 'error' : 'success',
+                    rawLine: fullMatch, // Store the complete 3-line match
+                    finishReason: finishReason.trim(),
+                    context: context.trim(),
+                    ccreqId: ccreqId.trim()
+                };
+                
+                entries.push(entry);
+            } catch (error) {
+                this.logger.appendLine(`[CopilotLogScanner] Error parsing multi-line match: ${error}`);
+            }
+        }
+        
+        return entries;
     }
 
     /**
@@ -316,7 +443,7 @@ export class CopilotLogScanner {
         }
         
         try {
-            const parsedTimestamp = new Date(timestamp).toISOString();
+            const parsedTimestamp = CopilotLogScanner.parseTimestamp(timestamp);
             
             // Parse completion info: "success | model-name | 1500ms | [context]"
             const parts = extraInfo.split('|').map(p => p.trim());
@@ -364,6 +491,7 @@ export class CopilotLogScanner {
      * Start watching the log file for changes
      * Uses directory watching to detect log file creation if it doesn't exist yet
      * Initializes file position to current end of file to avoid reading old content
+     * Also starts periodic force-flush checking to catch delayed writes
      */
     async startWatching(): Promise<void> {
         if (this.isWatching) {
@@ -386,6 +514,13 @@ export class CopilotLogScanner {
             // Log file doesn't exist yet - set up directory watching to detect creation
             await this.setupDirectoryWatcher();
         }
+
+        // Start periodic force-flush checking to catch delayed writes
+        if (this.options.enableForceFlush && this.options.forceFlushIntervalMs) {
+            this.forceFlushTimer = setInterval(() => {
+                this.forceFlushCheck();
+            }, this.options.forceFlushIntervalMs);
+        }
     }
 
     /**
@@ -398,19 +533,29 @@ export class CopilotLogScanner {
         this.logger.appendLine(`[CopilotLogScanner] Setting up file watcher for existing log: ${logPath}`);
         
         // Use simple glob pattern to avoid RelativePattern issues with spaces
-        this.watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(path.dirname(logPath), path.basename(logPath)));
+        this.watcher = new ForceFileWatcher(
+            new vscode.RelativePattern(path.dirname(logPath), path.basename(logPath)),
+            this.options.forceFlushIntervalMs,
+            async (uri: vscode.Uri) => {
+                // Forced check: return file mtime
+                try {
+                    const stat = await fs.stat(uri.fsPath);
+                    return stat.mtimeMs;
+                } catch {
+                    return null;
+                }
+            }
+        );
 
         let debounceTimer: NodeJS.Timeout | undefined;
 
         this.watcher.onDidChange(() => {
             this.logger.appendLine(`[CopilotLogScanner] REAL-TIME: Log file changed detected - ${logPath}`);
             this.logger.appendLine(`[CopilotLogScanner] REAL-TIME: Current callbacks count: ${this.callbacks.length}`);
-            
             if (debounceTimer) {
                 this.logger.appendLine(`[CopilotLogScanner] REAL-TIME: Clearing previous debounce timer`);
                 clearTimeout(debounceTimer);
             }
-            
             debounceTimer = setTimeout(async () => {
                 try {
                     this.logger.appendLine(`[CopilotLogScanner] REAL-TIME: Starting debounced scan after ${this.options.debounceMs}ms delay`);
@@ -424,16 +569,16 @@ export class CopilotLogScanner {
                 }
             }, this.options.debounceMs);
         });
-
         this.watcher.onDidCreate(() => {
             this.logger.appendLine(`[CopilotLogScanner] REAL-TIME: Log file created - ${logPath}`);
         });
-
         this.watcher.onDidDelete(() => {
             this.logger.appendLine(`[CopilotLogScanner] REAL-TIME: Log file deleted - ${logPath}`);
-            // If the file is deleted, switch to directory watching to detect recreation
             this.switchToDirectoryWatching();
         });
+        
+        // Start the watcher
+        this.watcher.start();
 
         this.isWatching = true;
         this.logger.appendLine(`[CopilotLogScanner] Successfully started watching log file: ${logPath}`);
@@ -460,40 +605,44 @@ export class CopilotLogScanner {
             
             // Watch for any files created in the copilot log directory
             const watchPattern = path.join(copilotLogDir, '*.log');
-            this.watcher = vscode.workspace.createFileSystemWatcher(watchPattern);
-
-            this.watcher.onDidCreate(async (uri) => {
-                const createdFile = uri.fsPath;
-                this.logger.appendLine(`[CopilotLogScanner] REAL-TIME: New file created in Copilot directory - ${createdFile}`);
-                
-                if (createdFile.endsWith('.log')) {
-                    this.logger.appendLine(`[CopilotLogScanner] REAL-TIME: Copilot log file created! Switching to file watcher - ${createdFile}`);
-                    
-                    // Stop current directory watcher
-                    this.watcher?.dispose();
-                    
-                    // Set up file-specific watcher for the new log file
-                    await this.setupFileWatcher(createdFile);
-                }
-            });
-
-            this.watcher.onDidChange(async (uri) => {
-                const changedFile = uri.fsPath;
-                if (changedFile.endsWith('.log')) {
-                    this.logger.appendLine(`[CopilotLogScanner] REAL-TIME: Copilot log file changed - ${changedFile}`);
-                    
-                    // Process the change using the same logic as file watcher
+            this.watcher = new ForceFileWatcher(
+                watchPattern,
+                this.options.forceFlushIntervalMs,
+                async (uri: vscode.Uri) => {
                     try {
-                        const result = await this.scanLogFile(changedFile);
-                        this.logger.appendLine(`[CopilotLogScanner] REAL-TIME: Directory scan complete - ${result.logPairs.length} pairs found`);
-                        this.notifyCallbacks(result);
-                    } catch (error) {
-                        this.logger.appendLine(`[CopilotLogScanner] REAL-TIME ERROR during directory watch scan: ${error}`);
+                        const stat = await fs.stat(uri.fsPath);
+                        return stat.mtimeMs;
+                    } catch {
+                        return null;
                     }
                 }
-            });
+            );
 
-            this.isWatching = true;
+        this.watcher.onDidCreate(async (uri) => {
+            const createdFile = uri.fsPath;
+            this.logger.appendLine(`[CopilotLogScanner] REAL-TIME: New file created in Copilot directory - ${createdFile}`);
+            if (createdFile.endsWith('.log')) {
+                this.logger.appendLine(`[CopilotLogScanner] REAL-TIME: Copilot log file created! Switching to file watcher - ${createdFile}`);
+                this.watcher?.dispose();
+                await this.setupFileWatcher(createdFile);
+            }
+        });
+        this.watcher.onDidChange(async (uri) => {
+            const changedFile = uri.fsPath;
+            if (changedFile.endsWith('.log')) {
+                this.logger.appendLine(`[CopilotLogScanner] REAL-TIME: Copilot log file changed - ${changedFile}`);
+                try {
+                    const result = await this.scanLogFile(changedFile);
+                    this.logger.appendLine(`[CopilotLogScanner] REAL-TIME: Directory scan complete - ${result.logPairs.length} pairs found`);
+                    this.notifyCallbacks(result);
+                } catch (error) {
+                    this.logger.appendLine(`[CopilotLogScanner] REAL-TIME ERROR during directory watch scan: ${error}`);
+                }
+            }
+        });
+        
+        // Start the watcher
+        this.watcher.start();            this.isWatching = true;
             this.logger.appendLine(`[CopilotLogScanner] Successfully started directory watching for log file creation`);
             this.logger.appendLine(`[CopilotLogScanner] Watch pattern: ${watchPattern}`);
             
@@ -529,6 +678,13 @@ export class CopilotLogScanner {
             this.watcher.dispose();
             this.watcher = undefined;
         }
+        
+        if (this.forceFlushTimer) {
+            clearInterval(this.forceFlushTimer);
+            this.forceFlushTimer = undefined;
+            this.logger.appendLine('[CopilotLogScanner] Stopped force-flush timer');
+        }
+        
         this.isWatching = false;
         this.logger.appendLine('[CopilotLogScanner] Stopped watching log file');
     }
@@ -588,6 +744,32 @@ export class CopilotLogScanner {
     resetFilePosition(): void {
         this.lastFilePosition = 0;
         this.logger.appendLine('[CopilotLogScanner] File position reset to beginning');
+    }
+
+    /**
+     * Manually trigger a force flush check to catch any delayed writes
+     * Useful when you suspect writes have been buffered
+     */
+    async manualForceFlush(): Promise<LogScanResult | null> {
+        if (!this.currentLogPath) {
+            this.logger.appendLine('[CopilotLogScanner] Manual force flush requested but no log path available');
+            return null;
+        }
+
+        this.logger.appendLine('[CopilotLogScanner] Manual force flush triggered');
+        try {
+            const result = await this.scanLogFile(this.currentLogPath);
+            if (result.logPairs.length > 0) {
+                this.logger.appendLine(`[CopilotLogScanner] Manual force flush found ${result.logPairs.length} entries`);
+                this.notifyCallbacks(result);
+            } else {
+                this.logger.appendLine('[CopilotLogScanner] Manual force flush found no new entries');
+            }
+            return result;
+        } catch (error) {
+            this.logger.appendLine(`[CopilotLogScanner] Manual force flush error: ${error}`);
+            return null;
+        }
     }
 
     /**

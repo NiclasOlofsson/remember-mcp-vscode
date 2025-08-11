@@ -2,12 +2,24 @@
 {
 	"files.exclude": {
 		"out": false, // set this to true to hide the "out" folder with the compiled JS files
-		"dist": false // set this to true to hide the "dist" folder with the compiled JS files
+		"dist": false, // set this to false to include "dist" folder in search results
+		"temp_auto": true, // exclude temp_auto directory from file explorer
+		"temp_summary": true // exclude temp_summary directory from file explorer
 	},
 	"search.exclude": {
 		"out": true, // set this to false to include "out" folder in search results
-		"dist": true // set this to false to include "dist" folder in search results
+		"dist": true, // set this to false to include "dist" folder in search results
+		"temp_auto": true, // exclude temp_auto directory from search
+		"temp_summary": true // exclude temp_summary directory from search
 	},
+	"files.watcherExclude": {
+		"**/temp_auto/**": true,
+		"**/temp_summary/**": true
+	},
+	"typescript.preferences.exclude": [
+		"**/temp_auto/**",
+		"**/temp_summary/**"
+	],
 	// Turn off tsc task auto detection since we have the necessary tasks as npm scripts
 	"typescript.tsc.autoDetect": "off"
 }

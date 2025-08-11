@@ -4,3 +4,5 @@ out/**
 node_modules/**
 README.md
 scripts/**
+temp_auto/**
+temp_summary/**

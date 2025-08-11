@@ -4,6 +4,7 @@
  */
 
 import * as vscode from 'vscode';
+import { ForceFileWatcher } from '../util/force-file-watcher';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
@@ -17,7 +18,7 @@ import {
 import { ILogger } from '../types/logger';
 
 export class ChatSessionScanner {
-    private fileWatcher?: vscode.FileSystemWatcher;
+    private fileWatcher?: ForceFileWatcher;
     private watcherCallbacks: Array<(result: SessionScanResult) => void> = [];
     private isWatching = false;
     
@@ -276,7 +277,19 @@ export class ChatSessionScanner {
             '**/chatSessions/*.json'
         );
         
-        this.fileWatcher = vscode.workspace.createFileSystemWatcher(pattern);
+        this.fileWatcher = new ForceFileWatcher(
+            pattern,
+            this.watcherOptions.debounceMs,
+            async (uri: vscode.Uri) => {
+                // Forced check: return file mtime
+                try {
+                    const stat = await fs.stat(uri.fsPath);
+                    return stat.mtimeMs;
+                } catch {
+                    return null;
+                }
+            }
+        );
         
         // Debounced handler for file changes
         let debounceTimer: NodeJS.Timeout | undefined;
@@ -300,6 +313,9 @@ export class ChatSessionScanner {
         
         this.fileWatcher.onDidCreate(handleFileChange);
         this.fileWatcher.onDidChange(handleFileChange);
+        
+        // Start the watcher
+        this.fileWatcher.start();
     }
 
     /**
