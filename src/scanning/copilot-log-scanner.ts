@@ -265,8 +265,8 @@ export class CopilotLogScanner {
 		while ((match = CopilotLogScanner.MULTILINE_REQUEST_PATTERN.exec(content)) !== null) {
 			const [
 				fullMatch,
-				finishReason,
-				requestId,
+				_timestamp1, finishReason,
+				_timestamp2, requestId, _modelDeploymentId,
 				timestamp3, ccreqId, status, modelName, duration, context
 			] = match;
 

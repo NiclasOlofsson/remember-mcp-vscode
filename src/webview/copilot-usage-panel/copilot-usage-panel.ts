@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { RememberMcpManager } from '../../extension';
+import { ServiceContainer } from '../../types/service-container';
 import { CopilotUsageModel } from './copilot-usage-model';
 import { CopilotUsageView } from './copilot-usage-view';
 
@@ -15,8 +15,7 @@ export class CopilotUsagePanel implements vscode.WebviewViewProvider, vscode.Dis
 	private _disposables: vscode.Disposable[] = [];
 
 	constructor(
-		private readonly extensionUri: vscode.Uri, 
-		private readonly rememberManager: RememberMcpManager
+		private readonly extensionUri: vscode.Uri
 	) {}
 
 	/**
@@ -33,10 +32,17 @@ export class CopilotUsagePanel implements vscode.WebviewViewProvider, vscode.Dis
 			localResourceRoots: [this.extensionUri]
 		};
 
-		// Get unified data service from remember manager
-		const unifiedDataService = this.rememberManager.getUnifiedDataService();
+		// Get unified data service from service container
+		if (!ServiceContainer.isInitialized()) {
+			console.error('ServiceContainer not initialized');
+			webviewView.webview.html = this.generateErrorHtml('Service container not initialized');
+			return;
+		}
+
+		const serviceContainer = ServiceContainer.getInstance();
+		const unifiedDataService = serviceContainer.getUnifiedSessionDataService();
 		if (!unifiedDataService) {
-			console.error('UnifiedDataService not available in RememberMcpManager');
+			console.error('UnifiedDataService not available in ServiceContainer');
 			// Show error in webview
 			webviewView.webview.html = this.generateErrorHtml('Data service not available');
 			return;

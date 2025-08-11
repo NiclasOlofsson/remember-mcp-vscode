@@ -1,5 +1,5 @@
 import { UnifiedSessionDataService } from '../../storage/unified-session-data-service';
-import { CopilotUsageEvent } from '../../types/usage-events';
+import { LogEntry } from '../../scanning/copilot-log-scanner';
 
 /**
  * Data structure for usage statistics
@@ -18,16 +18,16 @@ export interface UsageStats {
 export class CopilotUsageModel {
 	private _usageStats: UsageStats | null = null;
 	private _listeners: Array<(stats: UsageStats) => void> = [];
-	private _sessionEventCallback: (events: CopilotUsageEvent[]) => void;
+	private _logEventCallback: (entries: LogEntry[]) => void;
 
 	constructor(private readonly unifiedDataService: UnifiedSessionDataService) {
-		// Set up callback for session events from unified data service
-		this._sessionEventCallback = (events: CopilotUsageEvent[]) => {
-			this.processSessionEvents(events);
+		// Set up callback for log events from unified data service
+		this._logEventCallback = (entries: LogEntry[]) => {
+			this.processLogEntries(entries);
 		};
 		
-		// Register with unified data service for real-time updates
-		this.unifiedDataService.onSessionEventsUpdated(this._sessionEventCallback);
+		// Register with unified data service for real-time log updates
+		this.unifiedDataService.onLogEntriesUpdated(this._logEventCallback);
         
 		// Initialize stats with current data
 		this.initializeStats();
@@ -38,8 +38,8 @@ export class CopilotUsageModel {
      */
 	private async initializeStats(): Promise<void> {
 		try {
-			const events = await this.unifiedDataService.getSessionEvents();
-			this.processSessionEvents(events);
+			const entries = await this.unifiedDataService.getLogEntries();
+			this.processLogEntries(entries);
 		} catch (error) {
 			console.error('Error initializing stats:', error);
 			// Initialize with empty stats on error
@@ -53,16 +53,16 @@ export class CopilotUsageModel {
 	}
 
 	/**
-     * Process session events to extract model usage statistics
+     * Process log entries to extract model usage statistics
      */
-	private processSessionEvents(events: CopilotUsageEvent[]): void {
+	private processLogEntries(entries: LogEntry[]): void {
 		const modelUsage = new Map<string, number>();
 		
-		// Count model usage from events
-		events.forEach(event => {
-			if (event.model) {
-				const currentCount = modelUsage.get(event.model) || 0;
-				modelUsage.set(event.model, currentCount + 1);
+		// Count model usage from log entries
+		entries.forEach(entry => {
+			if (entry.modelName) {
+				const currentCount = modelUsage.get(entry.modelName) || 0;
+				modelUsage.set(entry.modelName, currentCount + 1);
 			}
 		});
 
@@ -129,8 +129,8 @@ export class CopilotUsageModel {
      */
 	public async refreshStats(): Promise<void> {
 		try {
-			const events = await this.unifiedDataService.getSessionEvents(true); // Force refresh
-			this.processSessionEvents(events);
+			const entries = await this.unifiedDataService.getLogEntries(true); // Force refresh
+			this.processLogEntries(entries);
 		} catch (error) {
 			console.error('Error refreshing stats:', error);
 		}
@@ -148,7 +148,7 @@ export class CopilotUsageModel {
      */
 	public dispose(): void {
 		// Remove callback from unified data service
-		this.unifiedDataService.removeSessionEventCallback(this._sessionEventCallback);
+		this.unifiedDataService.removeLogEventCallback(this._logEventCallback);
 		
 		// Clear local listeners
 		this._listeners = [];
