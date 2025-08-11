@@ -168,21 +168,16 @@ export class UsageStatsManager {
 }
 
 export class RememberMcpManager {
-	private outputChannel: vscode.LogOutputChannel;
-	private logger: ILogger;
 	private statusBarItem: vscode.StatusBarItem;
 	private mcpProvider: vscode.Disposable | null = null;
 	public readonly usageStatsManager: UsageStatsManager;
 	private unifiedDataService?: UnifiedSessionDataService;
     
 	constructor(
-		private context?: vscode.ExtensionContext, 
-		outputChannel?: vscode.LogOutputChannel,
-		logger?: ILogger
+		private readonly context: vscode.ExtensionContext, 
+		private readonly outputChannel: vscode.LogOutputChannel,
+		private readonly logger: ILogger
 	) {
-		this.outputChannel = outputChannel || vscode.window.createOutputChannel('Remember MCP', { log: true });
-		// Create logger if not provided, using the output channel
-		this.logger = logger || new VSCodeLogger(this.outputChannel);
 		this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
 		this.statusBarItem.command = 'remember-mcp.showPanel';
 		this.usageStatsManager = new UsageStatsManager();
@@ -536,34 +531,34 @@ export function activate(context: vscode.ExtensionContext) {
 
 	// Add debug command to inspect session content using only the unified layer
 	const debugLogCommand = vscode.commands.registerCommand('remember-mcp.debugLogContent', async () => {
-		const outputChannel = rememberManager['outputChannel'] as vscode.LogOutputChannel;
+		// const outputChannel = rememberManager['outputChannel'] as vscode.LogOutputChannel;
         
 		try {
 			// Use the shared service instance from the container
 			const sessionService = ServiceContainer.getInstance().getUnifiedSessionDataService();
             
 			const { sessionEvents, logEntries, stats } = await sessionService.initialize();
-			outputChannel.info(`Found ${sessionEvents.length} session events and ${logEntries.length} log entries from ${stats.totalSessions} sessions.`);
+			logger.info(`Found ${sessionEvents.length} session events and ${logEntries.length} log entries from ${stats.totalSessions} sessions.`);
             
 			if (sessionEvents.length > 0) {
-				outputChannel.info('Sample session events:');
+				logger.info('Sample session events:');
 				sessionEvents.slice(0, 5).forEach((event: any, index: number) => {
-					outputChannel.info(`  ${index + 1}: ${event.type} at ${event.timestamp} (${event.model || 'unknown model'})`);
+					logger.info(`  ${index + 1}: ${event.type} at ${event.timestamp} (${event.model || 'unknown model'})`);
 				});
 			} else {
-				outputChannel.info('No session events found.');
+				logger.info('No session events found.');
 			}
             
 			if (logEntries.length > 0) {
-				outputChannel.info('Sample log entries:');
+				logger.info('Sample log entries:');
 				logEntries.slice(0, 3).forEach((entry: any, index: number) => {
-					outputChannel.info(`  ${index + 1}: ${entry.status} at ${entry.timestamp} (${entry.modelName})`);
+					logger.info(`  ${index + 1}: ${entry.status} at ${entry.timestamp} (${entry.modelName})`);
 				});
 			} else {
-				outputChannel.info('No log entries found.');
+				logger.info('No log entries found.');
 			}
 		} catch (error) {
-			outputChannel.error(`Session debugging failed: ${error}`);
+			logger.error(`Session debugging failed: ${error}`);
 		}
 		// Note: No need to dispose shared service instance
 	});

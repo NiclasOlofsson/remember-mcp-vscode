@@ -13,8 +13,8 @@
 			"label": "npm watch",
 			"type": "shell",
 			"command": "npm",
-			"args": ["run", "watch"],
-			"problemMatcher": "$ts-webpack-watch",
+			"args": ["run", "watch:esbuild"],
+			"problemMatcher": "$tsc-watch",
 			"isBackground": true,
 			"presentation": {
 				"reveal": "never",
@@ -44,7 +44,7 @@
 			"command": "npm",
 			"args": ["run", "compile"],
 			"group": "build",
-			"problemMatcher": "$ts-webpack"
+			"problemMatcher": "$tsc"
 		},
 		{
 			"label": "npm test",
@@ -52,7 +52,7 @@
 			"command": "npm",
 			"args": ["run", "test"],
 			"group": "test",
-			"problemMatcher": "$ts-webpack"
+			"problemMatcher": "$tsc"
 		},
 		{
 			"label": "npm lint",

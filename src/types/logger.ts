@@ -21,10 +21,7 @@ export interface ILogger {
 	info(message: string, ...args: any[]): void;
 	warn(message: string, ...args: any[]): void;
 	error(message: string, ...args: any[]): void;
-    
-	// Legacy method for backward compatibility
-	appendLine(message: string): void;
-    
+
 	// Configuration
 	setLogLevel(level: LogLevel): void;
 	getLogLevel(): LogLevel;
@@ -84,11 +81,6 @@ export class VSCodeLogger implements ILogger {
 		this.autoShowInDevelopment();
 	}
 
-	appendLine(message: string): void {
-		// Legacy method - treat as INFO level
-		this.info(message);
-	}
-
 	private formatMessage(message: string, ...args: any[]): string {
 		if (args.length === 0) {
 			return message;
@@ -103,8 +95,8 @@ export class VSCodeLogger implements ILogger {
 
 	private formatMessageWithCaller(message: string, ...args: any[]): string {
 		const className = this.getClassName();
-		const prefix = className ? `[${className}] ` : '';
-		return this.formatMessage(`${prefix}${message}`, ...args);
+		const prefix = className ? `[${className}]` : '[Unknown]';
+		return this.formatMessage(`${prefix} ${message}`, ...args);
 	}
 
 	private getClassName(): string {
@@ -112,7 +104,7 @@ export class VSCodeLogger implements ILogger {
 		const stack = err.stack?.split('\n');
         
 		if (!stack || stack.length < 3) {
-			return '';
+			return '<empty stack>';
 		}
         
 		// In our logger, the call stack looks like:
@@ -127,6 +119,7 @@ export class VSCodeLogger implements ILogger {
 			const directCallerFrame = stack[4];
 			const className = this.extractClassNameFromFrame(directCallerFrame);
 			if (className && !this.isGenericClassName(className)) {
+				if(className === '') {return '<no-class-found>';}
 				return className;
 			}
 		}
@@ -136,11 +129,12 @@ export class VSCodeLogger implements ILogger {
 			const line = stack[i];
 			const className = this.extractClassNameFromFrame(line);
 			if (className && !this.isGenericClassName(className)) {
+				if(className === '') {return '<no-class-found>';}
 				return className;
 			}
 		}
         
-		return '';
+		return '<no-class-found>';
 	}
 
 	private extractClassNameFromFrame(frame: string): string {
@@ -158,13 +152,28 @@ export class VSCodeLogger implements ILogger {
 			return classMatch[1];
 		}
         
-		// Pattern 3: Extract from webpack bundles - look for class names in file paths
+		// Pattern 3: Extract from file paths - look for class names in TypeScript file names
+		classMatch = frame.match(/([a-z][a-z-]*[a-z])\.ts:\d+:\d+/);
+		if (classMatch) {
+			// Convert kebab-case to PascalCase (e.g., "unified-session-data-service" -> "UnifiedSessionDataService")
+			const fileName = classMatch[1];
+			// Handle special case for "extension.ts" -> "RememberMcpManager" 
+			if (fileName === 'extension') {
+				return 'RememberMcpManager';
+			}
+			const pascalCase = fileName.split('-').map(word => 
+				word.charAt(0).toUpperCase() + word.slice(1)
+			).join('');
+			return pascalCase;
+		}
+        
+		// Pattern 4: Extract from webpack bundles - look for class names in file paths
 		classMatch = frame.match(/([A-Z][a-zA-Z0-9_]+(?:Scanner|Manager|Service|Panel|Transformer|Engine|Watcher|Controller))/);
 		if (classMatch) {
 			return classMatch[1];
 		}
         
-		// Pattern 4: Generic class pattern with method call
+		// Pattern 5: Generic class pattern with method call
 		classMatch = frame.match(/([A-Z][a-zA-Z0-9_]+)\.[a-zA-Z_][a-zA-Z0-9_]*\s*\(/);
 		if (classMatch) {
 			return classMatch[1];
@@ -188,94 +197,5 @@ export class VSCodeLogger implements ILogger {
 			this.outputChannel.show(true); // preserveFocus = true to be less intrusive
 			this.hasShownChannel = true;
 		}
-	}
-}
-
-/**
- * Console logger for testing
- */
-export class ConsoleLogger implements ILogger {
-	private logLevel: LogLevel = LogLevel.TRACE;
-
-	setLogLevel(level: LogLevel): void {
-		this.logLevel = level;
-	}
-
-	getLogLevel(): LogLevel {
-		return this.logLevel;
-	}
-
-	trace(message: string, ...args: any[]): void {
-		this.log(LogLevel.TRACE, 'TRACE', message, ...args);
-	}
-
-	debug(message: string, ...args: any[]): void {
-		this.log(LogLevel.DEBUG, 'DEBUG', message, ...args);
-	}
-
-	info(message: string, ...args: any[]): void {
-		this.log(LogLevel.INFO, 'INFO', message, ...args);
-	}
-
-	warn(message: string, ...args: any[]): void {
-		this.log(LogLevel.WARN, 'WARN', message, ...args);
-	}
-
-	error(message: string, ...args: any[]): void {
-		this.log(LogLevel.ERROR, 'ERROR', message, ...args);
-	}
-
-	appendLine(message: string): void {
-		this.info(message);
-	}
-
-	private log(level: LogLevel, levelName: string, message: string, ...args: any[]): void {
-		if (level < this.logLevel) {
-			return;
-		}
-
-		const timestamp = new Date().toISOString();
-		const formattedArgs = args.length > 0 ? ` ${args.map(arg => 
-			typeof arg === 'object' ? JSON.stringify(arg) : String(arg)
-		).join(' ')}` : '';
-        
-		console.log(`[${timestamp}] [${levelName}] ${message}${formattedArgs}`);
-	}
-}
-
-/**
- * Silent logger for tests that don't need output
- */
-export class SilentLogger implements ILogger {
-	setLogLevel(_level: LogLevel): void {
-		// No-op
-	}
-
-	getLogLevel(): LogLevel {
-		return LogLevel.ERROR; // Effectively silent
-	}
-
-	trace(_message: string, ..._args: any[]): void {
-		// No-op
-	}
-
-	debug(_message: string, ..._args: any[]): void {
-		// No-op
-	}
-
-	info(_message: string, ..._args: any[]): void {
-		// No-op
-	}
-
-	warn(_message: string, ..._args: any[]): void {
-		// No-op
-	}
-
-	error(_message: string, ..._args: any[]): void {
-		// No-op
-	}
-
-	appendLine(_message: string): void {
-		// No-op
 	}
 }

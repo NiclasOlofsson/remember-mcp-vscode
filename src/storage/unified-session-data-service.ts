@@ -261,7 +261,7 @@ export class UnifiedSessionDataService {
 			// Register callback for log updates
 			this.logScanner.onLogUpdated(async (logResult: LogScanResult) => {
 				try {
-					this.logger.trace(`REAL-TIME  Received ${logResult.logEntries.length} log entries`);
+					this.logger.warn(`UNIFIED REAL-TIME  Received ${logResult.logEntries.length} log entries`);
                     
 					if (logResult.logEntries.length > 0) {
 						// Update cached log entries 

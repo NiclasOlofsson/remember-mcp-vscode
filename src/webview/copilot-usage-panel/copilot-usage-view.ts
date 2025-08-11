@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
-import { UsageStats } from './copilot-usage-model';
+import { CopilotUsageModel } from './copilot-usage-model';
 import { WebviewUtils } from '../shared/webview-utils';
+import { ILogger } from '../../types/logger';
 
 /**
  * View for Copilot Usage Panel
@@ -8,24 +9,37 @@ import { WebviewUtils } from '../shared/webview-utils';
  */
 export class CopilotUsageView {
 	constructor(
-		private readonly webview: vscode.Webview,
-		private readonly extensionUri: vscode.Uri
-	) {}
+		private readonly _webview: vscode.Webview,
+		private readonly _model: CopilotUsageModel,
+		private readonly _extensionUri: vscode.Uri,
+		private readonly _logger: ILogger
+	) {
+		// Set up data binding: model changes update the view
+		this._model.onDataChanged(async () => {
+			try {
+				this._logger.trace(`Model data changed, re-rendering view with ${this._model.stats.length} entries: ${JSON.stringify(this._model.stats)}`);
+				await this.render();
+			} catch (error) {
+				this._logger.error('Error rendering CopilotUsageView:', error);
+			}
+		});
+
+	}
 
 	/**
      * Generate and set the HTML content for the webview
      */
-	public async render(stats: UsageStats): Promise<void> {
-		const html = await this.generateHtml(stats);
-		this.webview.html = html;
+	public async render(): Promise<void> {
+		const html = await this.generateHtml();
+		this._webview.html = html;
 	}
 
 	/**
      * Generate HTML content based on usage statistics
      */
-	private async generateHtml(stats: UsageStats): Promise<string> {
-		const tableRows = this.generateTableRows(stats);
-		const sharedStyles = await WebviewUtils.getSharedStyles(this.extensionUri);
+	private async generateHtml(): Promise<string> {
+		const tableRows = this.generateTableRows();
+		const sharedStyles = await WebviewUtils.getSharedStyles(this._extensionUri);
 
 		return `<!DOCTYPE html>
         <html lang="en">
@@ -36,9 +50,16 @@ export class CopilotUsageView {
             <title>Copilot Usage</title>
             ${sharedStyles}
             <style>
+                tr {
+                    background-color: var(--vscode-sideBar-background);
+                }
+                @keyframes flash-blink {
+                    0%   { background-color: var(--vscode-sideBar-background); color: var(--vscode-foreground); }
+                    40%  { background-color: var(--vscode-foreground); color: var(--vscode-sideBar-background); }
+                    100% { background-color: var(--vscode-sideBar-background); color: var(--vscode-foreground); }
+                }
                 .flash-row {
-                    background-color: #ffe066;
-                    transition: background-color 0.8s ease;
+                    animation: flash-blink 0.8s ease;
                 }
             </style>
         </head>
@@ -48,7 +69,7 @@ export class CopilotUsageView {
             </div>
             
             <div class="summary">
-                Total: ${stats.totalRequests} requests
+                Total: ${this._model.totalRequests} requests
             </div>
             
             <table>
@@ -62,8 +83,8 @@ export class CopilotUsageView {
                     ${tableRows}
                 </tbody>
             </table>
-            
-            <button class="secondary" onclick="sendMessage('clearStats')" ${stats.isDataAvailable ? '' : 'disabled'}>Clear</button>
+
+            <button class="secondary" onclick="sendMessage('clearStats')" ${this._model.hasData() ? '' : 'disabled'}>Clear</button>
             <button onclick="sendMessage('refresh')">Refresh</button>
             
             ${WebviewUtils.getSharedScript()}
@@ -73,7 +94,7 @@ export class CopilotUsageView {
                     document.querySelectorAll('.flash-row').forEach(row => {
                         setTimeout(() => {
                             row.classList.remove('flash-row');
-                        }, 500);
+                        }, 800);
                     });
                 });
             </script>
@@ -84,12 +105,12 @@ export class CopilotUsageView {
 	/**
      * Generate table rows for usage statistics
      */
-	private generateTableRows(stats: UsageStats): string {
-		if (stats.stats.length === 0) {
+	private generateTableRows(): string {
+		if (!this._model.hasData()) {
 			return '<tr><td colspan="2" class="no-data">No usage data available<br/>Start using Copilot to track usage</td></tr>';
 		}
-        
-		return stats.stats.map(({ model, count, updated }) => 
+
+		return this._model.stats.map(({ model, count, updated }) =>
 			`<tr${updated ? ' class="flash-row"' : ''}><td>${WebviewUtils.escapeHtml(model)}</td><td class="count">${count}</td></tr>`
 		).join('');
 	}

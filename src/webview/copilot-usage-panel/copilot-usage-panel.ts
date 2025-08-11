@@ -9,18 +9,18 @@ import { CopilotUsageView } from './copilot-usage-view';
  */
 export class CopilotUsagePanel implements vscode.WebviewViewProvider, vscode.Disposable {
 	public static readonly viewType = 'remember-mcp-usage-panel';
-    
+
 	private _model: CopilotUsageModel | null = null;
 	private _view: CopilotUsageView | null = null;
 	private _disposables: vscode.Disposable[] = [];
 
 	constructor(
 		private readonly extensionUri: vscode.Uri
-	) {}
+	) { }
 
 	/**
-     * Resolve the webview view and set up model and view
-     */
+	 * Resolve the webview view and set up model and view
+	 */
 	public async resolveWebviewView(
 		webviewView: vscode.WebviewView,
 		_context: vscode.WebviewViewResolveContext,
@@ -49,13 +49,8 @@ export class CopilotUsagePanel implements vscode.WebviewViewProvider, vscode.Dis
 		}
 
 		// Initialize model and view
-		this._model = new CopilotUsageModel(unifiedDataService);
-		this._view = new CopilotUsageView(webviewView.webview, this.extensionUri);
-
-		// Set up data binding: model changes update the view
-		this._model.onDataChanged(async () => {
-			await this._view!.render(this._model!.usageStats);
-		});
+		this._model = new CopilotUsageModel(unifiedDataService, serviceContainer.getLogger());
+		this._view = new CopilotUsageView(webviewView.webview, this._model, this.extensionUri, serviceContainer.getLogger());
 
 		// Handle messages from the webview
 		const messageHandler = webviewView.webview.onDidReceiveMessage(async (message) => {
@@ -64,13 +59,13 @@ export class CopilotUsagePanel implements vscode.WebviewViewProvider, vscode.Dis
 		this._disposables.push(messageHandler);
 
 		// Initial render
-		await this._view.render(this._model.usageStats);
+		await this._view.render();
 	}
 
 	/**
-     * Handle messages from the webview
-     */
-	private async handleMessage(message: { type: string; [key: string]: any }): Promise<void> {
+	 * Handle messages from the webview
+	 */
+	private async handleMessage(message: { type: string;[key: string]: any }): Promise<void> {
 		if (!this._model) {
 			return;
 		}
@@ -88,8 +83,8 @@ export class CopilotUsagePanel implements vscode.WebviewViewProvider, vscode.Dis
 	}
 
 	/**
-     * Handle clear statistics request
-     */
+	 * Handle clear statistics request
+	 */
 	private async handleClearStats(): Promise<void> {
 		if (!this._model) {
 			return;
@@ -105,8 +100,8 @@ export class CopilotUsagePanel implements vscode.WebviewViewProvider, vscode.Dis
 	}
 
 	/**
-     * Handle refresh request
-     */
+	 * Handle refresh request
+	 */
 	private async handleRefresh(): Promise<void> {
 		if (!this._model) {
 			return;
@@ -121,8 +116,8 @@ export class CopilotUsagePanel implements vscode.WebviewViewProvider, vscode.Dis
 	}
 
 	/**
-     * Generate error HTML for display in webview
-     */
+	 * Generate error HTML for display in webview
+	 */
 	private generateErrorHtml(message: string): string {
 		return `<!DOCTYPE html>
         <html lang="en">
@@ -152,17 +147,17 @@ export class CopilotUsagePanel implements vscode.WebviewViewProvider, vscode.Dis
 	}
 
 	/**
-     * Dispose of the panel and clean up resources
-     */
+	 * Dispose of the panel and clean up resources
+	 */
 	public dispose(): void {
 		this._disposables.forEach(d => d.dispose());
 		this._disposables = [];
-        
+
 		if (this._model) {
 			this._model.dispose();
 			this._model = null;
 		}
-        
+
 		this._view = null;
 	}
 }
