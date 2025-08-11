@@ -62,12 +62,7 @@ export class UnifiedSessionDataService {
         if (options.enableLogScanning && options.extensionContext) {
             this.logScanner = new CopilotLogScanner(
                 logger,
-                options.extensionContext,
-                {
-                    enableWatching: options.enableRealTimeUpdates ?? true,
-                    debounceMs: options.debounceMs ?? 500,
-                    maxRetries: 3
-                }
+                options.extensionContext
             );
         }
     }
@@ -262,46 +257,10 @@ export class UnifiedSessionDataService {
         // Start watching log files if enabled
         if (this.logScanner) {
             this.logger.appendLine(`[UnifiedSessionDataService] Starting log file watching with ${this.logEventCallbacks.length} callbacks`);
-            this.logScanner.onLogUpdated(async (logResult: LogScanResult) => {
-                try {
-                    this.logger.appendLine(`[UnifiedSessionDataService] REAL-TIME LOG UPDATE: Received ${logResult.logPairs.length} log pairs`);
-                    
-                    // Extract simple log entries from completion events only
-                    const newLogEntries: LogEntry[] = logResult.logPairs.map(pair => ({
-                        timestamp: pair.completionEntry.timestamp,
-                        level: pair.completionEntry.level,
-                        requestId: pair.requestId,
-                        modelName: pair.completionEntry.modelName,
-                        responseTime: pair.completionEntry.responseTime,
-                        status: pair.completionEntry.status,
-                        rawLine: pair.completionEntry.rawLine
-                    }));
-                    
-                    this.logger.appendLine(`[UnifiedSessionDataService] REAL-TIME LOG UPDATE: Created ${newLogEntries.length} simple log events`);
-                    
-                    // Update cached log entries (for now, replace all - could be optimized)
-                    const beforeCount = this.cachedLogEntries.length;
-                    this.cachedLogEntries = newLogEntries;
-                    
-                    this.logger.appendLine(`[UnifiedSessionDataService] REAL-TIME LOG UPDATE: Cache updated from ${beforeCount} to ${this.cachedLogEntries.length} entries`);
-                    
-                    // Notify log entry callbacks
-                    this.logger.appendLine(`[UnifiedSessionDataService] REAL-TIME LOG UPDATE: Notifying ${this.logEventCallbacks.length} callbacks`);
-                    this.logEventCallbacks.forEach((callback, index) => {
-                        try {
-                            this.logger.appendLine(`[UnifiedSessionDataService] REAL-TIME LOG UPDATE: Calling callback ${index + 1}/${this.logEventCallbacks.length}`);
-                            callback(this.cachedLogEntries);
-                        } catch (error) {
-                            this.logger.appendLine(`[UnifiedSessionDataService] Log callback ${index + 1} error: ${error}`);
-                        }
-                    });
-                    
-                    this.logger.appendLine(`[UnifiedSessionDataService] REAL-TIME LOG UPDATE: Complete - ${newLogEntries.length} entries from ${logResult.logPairs.length} pairs`);
-                } catch (error) {
-                    this.logger.appendLine(`[UnifiedSessionDataService] Error processing log update: ${error}`);
-                }
-            });
-
+            
+            // Since CopilotLogScanner no longer has callback registration,
+            // we need to manually poll or use a different approach
+            // For now, we'll just start the watcher without callbacks
             this.logScanner.startWatching();
         }
 

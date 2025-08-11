@@ -279,16 +279,8 @@ export class ChatSessionScanner {
         
         this.fileWatcher = new ForceFileWatcher(
             pattern,
-            this.watcherOptions.debounceMs,
-            async (uri: vscode.Uri) => {
-                // Forced check: return file mtime
-                try {
-                    const stat = await fs.stat(uri.fsPath);
-                    return stat.mtimeMs;
-                } catch {
-                    return null;
-                }
-            }
+            0,    // No forced flush needed for session files
+            3000  // Heavy debouncing (3s) - sessions update in bursts, we don't need immediate response
         );
         
         // Debounced handler for file changes

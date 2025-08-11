@@ -1,45 +1,39 @@
 import * as vscode from 'vscode';
+import * as fs from 'fs/promises';
 
 /**
- * ForceFileWatcher wraps a VS Code FileSystemWatcher and adds periodic forced checks
- * to catch delayed writes or missed events. It does NOT subclass FileSystemWatcher,
- * but exposes a similar API and can be used as a drop-in replacement for most use cases.
+ * ForceFileWatcher wraps a VS Code FileSystemWatcher and adds optional periodic forced checks
+ * to catch delayed writes or missed events. It implements the FileSystemWatcher interface,
+ * making it a true drop-in replacement for VS Code's FileSystemWatcher.
+ * 
+ * By default, it behaves exactly like the system FileSystemWatcher (no forced flush, no debouncing).
+ * Both features can be optionally enabled by setting their intervals to non-zero values.
  */
-export class ForceFileWatcher {
+export class ForceFileWatcher implements vscode.FileSystemWatcher {
     private watcher: vscode.FileSystemWatcher;
     private forceFlushTimer?: NodeJS.Timeout;
     private isWatching = false;
-    private callbacks: Array<(uri: vscode.Uri) => void> = [];
-    private lastForcedState: Map<string, any> = new Map();
+    private disposables: vscode.Disposable[] = [];
+    
+    // Debouncing state
+    private debounceTimers: Map<string, NodeJS.Timeout> = new Map();
 
     /**
      * @param globPattern Glob pattern for files to watch
-     * @param forceFlushIntervalMs Interval for forced checks (ms)
-     * @param onForceFlush Optional callback for forced check events
+     * @param forceFlushIntervalMs Interval for forced checks (ms) - 0 to disable (default: disabled)
+     * @param debounceMs Debouncing interval (ms) - 0 to disable (default: disabled)
      * @param ignoreCreateEvents Ignore create events
      * @param ignoreChangeEvents Ignore change events
      * @param ignoreDeleteEvents Ignore delete events
      */
-    /**
-     * @param globPattern Glob pattern for files to watch
-     * @param forceFlushIntervalMs Interval for forced checks (ms)
-     * @param forcedCheckFn Optional function to perform forced file check. Should return a value representing file state (e.g., mtime, hash, contents)
-     * @param onForceFlush Optional callback for forced check events
-     * @param ignoreCreateEvents Ignore create events
-     * @param ignoreChangeEvents Ignore change events
-     * @param ignoreDeleteEvents Ignore delete events
-     */
-    private globPattern: vscode.GlobPattern;
     constructor(
-        globPattern: vscode.GlobPattern,
-        private forceFlushIntervalMs: number = 2000,
-        private forcedCheckFn?: (uri: vscode.Uri) => Promise<any>,
-        private onForceFlush?: () => void,
-        ignoreCreateEvents?: boolean,
-        ignoreChangeEvents?: boolean,
-        ignoreDeleteEvents?: boolean
+        private readonly globPattern: vscode.GlobPattern,
+        public readonly forceFlushIntervalMs: number = 0,
+        public readonly debounceMs: number = 0,
+        public readonly ignoreCreateEvents: boolean = false,
+        public readonly ignoreChangeEvents: boolean = false,
+        public readonly ignoreDeleteEvents: boolean = false
     ) {
-        this.globPattern = globPattern;
         this.watcher = vscode.workspace.createFileSystemWatcher(
             globPattern,
             ignoreCreateEvents,
@@ -47,6 +41,52 @@ export class ForceFileWatcher {
             ignoreDeleteEvents
         );
     }
+
+    // Implement FileSystemWatcher interface properties
+    readonly onDidChange: vscode.Event<vscode.Uri> = (listener: (e: vscode.Uri) => any, thisArgs?: any, disposables?: vscode.Disposable[]) => {
+        const disposable = this.watcher.onDidChange((uri) => {
+            this.debouncedCallback(uri, [listener]);
+        });
+        if (disposables) {
+            disposables.push(disposable);
+        }
+        this.disposables.push(disposable);
+        return disposable;
+    };
+
+    readonly onDidCreate: vscode.Event<vscode.Uri> = (listener: (e: vscode.Uri) => any, thisArgs?: any, disposables?: vscode.Disposable[]) => {
+        const disposable = this.watcher.onDidCreate((uri) => {
+            this.debouncedCallback(uri, [listener]);
+        });
+        if (disposables) {
+            disposables.push(disposable);
+        }
+        this.disposables.push(disposable);
+        return disposable;
+    };
+
+    readonly onDidDelete: vscode.Event<vscode.Uri> = (listener: (e: vscode.Uri) => any, thisArgs?: any, disposables?: vscode.Disposable[]) => {
+        // Set up verified delete handler that checks if file actually exists
+        const disposable = this.watcher.onDidDelete(async (uri: vscode.Uri) => {
+            try {
+                // Verify that the file is actually gone
+                await fs.stat(uri.fsPath);
+                // If we get here, file still exists - this is a false delete event
+                console.log(`[ForceFileWatcher] False delete event for ${uri.fsPath} - file still exists`);
+                return;
+            } catch (error) {
+                // File is actually gone - this is a real delete event
+                console.log(`[ForceFileWatcher] Verified delete event for ${uri.fsPath}`);
+                listener(uri);
+            }
+        });
+        
+        if (disposables) {
+            disposables.push(disposable);
+        }
+        this.disposables.push(disposable);
+        return disposable;
+    };
 
     /**
      * Start watching and begin periodic forced checks
@@ -56,27 +96,17 @@ export class ForceFileWatcher {
             return;
         }
         this.isWatching = true;
-        // Start periodic forced checks
+        // Start periodic forced checks - just poke files to trigger OS flush
         if (this.forceFlushIntervalMs > 0) {
             this.forceFlushTimer = setInterval(async () => {
-                if (this.onForceFlush) {
-                    this.onForceFlush();
-                }
-                if (this.forcedCheckFn) {
-                    // Get all files matching the glob pattern
-                    const files = await vscode.workspace.findFiles(this.globPattern);
-                    for (const uri of files) {
-                        try {
-                            const state = await this.forcedCheckFn(uri);
-                            const lastState = this.lastForcedState.get(uri.toString());
-                            if (lastState !== undefined && state !== lastState) {
-                                // Trigger change event if state differs
-                                this.callbacks.forEach(cb => cb(uri));
-                            }
-                            this.lastForcedState.set(uri.toString(), state);
-                        } catch (err) {
-                            // Ignore errors for missing files, etc.
-                        }
+                // Get all files matching the glob pattern and poke them
+                const files = await vscode.workspace.findFiles(this.globPattern);
+                for (const uri of files) {
+                    try {
+                        // Just poke the file to force OS flush - don't compare state
+                        await fs.stat(uri.fsPath);
+                    } catch (err) {
+                        // Ignore errors for missing files, etc.
                     }
                 }
             }, this.forceFlushIntervalMs);
@@ -99,36 +129,68 @@ export class ForceFileWatcher {
      */
     dispose(): void {
         this.stop();
+        
+        // Clear all debounce timers
+        for (const timer of this.debounceTimers.values()) {
+            clearTimeout(timer);
+        }
+        this.debounceTimers.clear();
+        
+        // Dispose all event listener disposables
+        for (const disposable of this.disposables) {
+            try {
+                disposable.dispose();
+            } catch (err) {
+                // Ignore errors during disposal
+            }
+        }
+        this.disposables = [];
         this.watcher.dispose();
-        this.callbacks = [];
     }
 
     /**
-     * Subscribe to file change events
+     * Debounced event handler - delays callback execution until events settle
+     * If debouncing is disabled (debounceMs = 0), executes callbacks immediately
      */
-    onDidChange(callback: (uri: vscode.Uri) => void): void {
-        this.watcher.onDidChange(callback);
-        this.callbacks.push(callback);
-    }
+    private debouncedCallback(uri: vscode.Uri, callbacks: Array<(uri: vscode.Uri) => void>): void {
+        // If debouncing is disabled, execute immediately
+        if (this.debounceMs === 0) {
+            callbacks.forEach(callback => callback(uri));
+            return;
+        }
 
-    onDidCreate(callback: (uri: vscode.Uri) => void): void {
-        this.watcher.onDidCreate(callback);
-        this.callbacks.push(callback);
-    }
-
-    onDidDelete(callback: (uri: vscode.Uri) => void): void {
-        this.watcher.onDidDelete(callback);
-        this.callbacks.push(callback);
+        const key = uri.toString();
+        
+        // Clear existing timer for this file
+        const existingTimer = this.debounceTimers.get(key);
+        if (existingTimer) {
+            clearTimeout(existingTimer);
+        }
+        
+        // Set new timer
+        const timer = setTimeout(() => {
+            // Execute all callbacks after debounce period
+            callbacks.forEach(callback => callback(uri));
+            this.debounceTimers.delete(key);
+        }, this.debounceMs);
+        
+        this.debounceTimers.set(key, timer);
     }
 
     /**
      * Get watching status
      */
-    getStatus(): { isWatching: boolean; callbackCount: number; interval: number } {
+    getStatus(): { 
+        isWatching: boolean; 
+        forceFlushInterval: number; 
+        debounceMs: number;
+        pendingDebounces: number 
+    } {
         return {
             isWatching: this.isWatching,
-            callbackCount: this.callbacks.length,
-            interval: this.forceFlushIntervalMs
+            forceFlushInterval: this.forceFlushIntervalMs,
+            debounceMs: this.debounceMs,
+            pendingDebounces: this.debounceTimers.size
         };
     }
 }
