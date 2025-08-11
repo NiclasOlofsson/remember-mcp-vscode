@@ -53,8 +53,8 @@ export class CopilotUsagePanel implements vscode.WebviewViewProvider, vscode.Dis
 		this._view = new CopilotUsageView(webviewView.webview, this.extensionUri);
 
 		// Set up data binding: model changes update the view
-		this._model.onDataChanged(async (stats) => {
-			await this._view!.render(stats);
+		this._model.onDataChanged(async () => {
+			await this._view!.render(this._model!.usageStats);
 		});
 
 		// Handle messages from the webview

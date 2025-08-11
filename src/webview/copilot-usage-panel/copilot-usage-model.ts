@@ -5,9 +5,8 @@ import { LogEntry } from '../../scanning/copilot-log-scanner';
  * Data structure for usage statistics
  */
 export interface UsageStats {
-	readonly modelUsage: Map<string, number>;
+	readonly stats: Array<{ model: string; count: number; updated: boolean }>;
 	readonly totalRequests: number;
-	readonly sortedStats: [string, number][];
 	readonly isDataAvailable: boolean;
 }
 
@@ -17,7 +16,8 @@ export interface UsageStats {
  */
 export class CopilotUsageModel {
 	private _usageStats: UsageStats | null = null;
-	private _listeners: Array<(stats: UsageStats) => void> = [];
+	private _previousModelCounts: Map<string, number> = new Map();
+	private _listeners: Array<() => void> = [];
 	private _logEventCallback: (entries: LogEntry[]) => void;
 
 	constructor(private readonly unifiedDataService: UnifiedSessionDataService) {
@@ -44,9 +44,8 @@ export class CopilotUsageModel {
 			console.error('Error initializing stats:', error);
 			// Initialize with empty stats on error
 			this._usageStats = {
-				modelUsage: new Map(),
+				stats: [],
 				totalRequests: 0,
-				sortedStats: [],
 				isDataAvailable: false
 			};
 		}
@@ -67,18 +66,28 @@ export class CopilotUsageModel {
 		});
 
 		const totalRequests = Array.from(modelUsage.values()).reduce((sum, count) => sum + count, 0);
-		const sortedStats = Array.from(modelUsage.entries()).sort((a, b) => b[1] - a[1]);
 		const isDataAvailable = totalRequests > 0;
 
+		// Create stats array with update detection
+		const stats = Array.from(modelUsage.entries())
+			.map(([model, count]) => ({
+				model,
+				count,
+				updated: this._previousModelCounts.get(model) !== count
+			}))
+			.sort((a, b) => b.count - a.count);
+
+		// Update previous counts for next comparison
+		this._previousModelCounts = new Map(modelUsage);
+
 		this._usageStats = {
-			modelUsage,
+			stats,
 			totalRequests,
-			sortedStats,
 			isDataAvailable
 		};
 
-		// Notify all listeners
-		this._listeners.forEach(listener => listener(this._usageStats!));
+		// Notify all listeners (lightweight notification)
+		this._listeners.forEach(listener => listener());
 	}
 
 	/**
@@ -88,9 +97,8 @@ export class CopilotUsageModel {
 		if (!this._usageStats) {
 			// Return empty stats if not initialized yet
 			return {
-				modelUsage: new Map(),
+				stats: [],
 				totalRequests: 0,
-				sortedStats: [],
 				isDataAvailable: false
 			};
 		}
@@ -100,7 +108,7 @@ export class CopilotUsageModel {
 	/**
      * Subscribe to changes in data
      */
-	public onDataChanged(listener: (stats: UsageStats) => void): void {
+	public onDataChanged(listener: () => void): void {
 		this._listeners.push(listener);
 	}
 
@@ -114,14 +122,16 @@ export class CopilotUsageModel {
 		
 		// Reset local stats to empty
 		this._usageStats = {
-			modelUsage: new Map(),
+			stats: [],
 			totalRequests: 0,
-			sortedStats: [],
 			isDataAvailable: false
 		};
 		
+		// Reset previous counts
+		this._previousModelCounts.clear();
+		
 		// Notify listeners
-		this._listeners.forEach(listener => listener(this._usageStats!));
+		this._listeners.forEach(listener => listener());
 	}
 
 	/**

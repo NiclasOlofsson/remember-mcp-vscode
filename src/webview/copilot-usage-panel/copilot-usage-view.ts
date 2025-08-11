@@ -35,6 +35,12 @@ export class CopilotUsageView {
             <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
             <title>Copilot Usage</title>
             ${sharedStyles}
+            <style>
+                .flash-row {
+                    background-color: #ffe066;
+                    transition: background-color 0.8s ease;
+                }
+            </style>
         </head>
         <body>
             <div class="summary">
@@ -61,6 +67,16 @@ export class CopilotUsageView {
             <button onclick="sendMessage('refresh')">Refresh</button>
             
             ${WebviewUtils.getSharedScript()}
+            <script>
+                // Flash updated rows
+                document.addEventListener('DOMContentLoaded', function() {
+                    document.querySelectorAll('.flash-row').forEach(row => {
+                        setTimeout(() => {
+                            row.classList.remove('flash-row');
+                        }, 500);
+                    });
+                });
+            </script>
         </body>
         </html>`;
 	}
@@ -69,12 +85,12 @@ export class CopilotUsageView {
      * Generate table rows for usage statistics
      */
 	private generateTableRows(stats: UsageStats): string {
-		if (stats.sortedStats.length === 0) {
+		if (stats.stats.length === 0) {
 			return '<tr><td colspan="2" class="no-data">No usage data available<br/>Start using Copilot to track usage</td></tr>';
 		}
         
-		return stats.sortedStats.map(([model, count]) => 
-			`<tr><td>${WebviewUtils.escapeHtml(model)}</td><td class="count">${count}</td></tr>`
+		return stats.stats.map(({ model, count, updated }) => 
+			`<tr${updated ? ' class="flash-row"' : ''}><td>${WebviewUtils.escapeHtml(model)}</td><td class="count">${count}</td></tr>`
 		).join('');
 	}
 }
