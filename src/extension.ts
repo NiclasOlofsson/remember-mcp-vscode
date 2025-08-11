@@ -212,17 +212,7 @@ export class RememberMcpManager {
 				this.logger.warn('WARNING: ServiceContainer not initialized, cannot get shared service');
 				return;
 			}
-
-			// Subscribe to real-time log entries for usage tracking
-			this.unifiedDataService.onLogEntriesUpdated((logEntries) => {
-				// Process new log entries for model usage tracking
-				logEntries.forEach(entry => {
-					if (entry.modelName && entry.status === 'success') {
-						this.usageStatsManager.recordUsage(entry.modelName);
-					}
-				});
-			});
-
+			
 			// Initialize the service if not already initialized
 			await this.unifiedDataService.initialize();
 			this.logger.info('Connected to shared unified data service for usage tracking');
@@ -254,6 +244,14 @@ export class RememberMcpManager {
      */
 	clearModelUsageStats(): void {
 		this.usageStatsManager.clearStats();
+	}
+
+	/**
+     * Get the unified data service instance
+     * @returns UnifiedSessionDataService instance or undefined if not initialized
+     */
+	getUnifiedDataService(): UnifiedSessionDataService | undefined {
+		return this.unifiedDataService;
 	}
 
 	private updateStatusBar(status: 'running' | 'stopped' | 'error') {

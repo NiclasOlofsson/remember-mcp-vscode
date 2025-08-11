@@ -33,8 +33,17 @@ export class CopilotUsagePanel implements vscode.WebviewViewProvider, vscode.Dis
 			localResourceRoots: [this.extensionUri]
 		};
 
+		// Get unified data service from remember manager
+		const unifiedDataService = this.rememberManager.getUnifiedDataService();
+		if (!unifiedDataService) {
+			console.error('UnifiedDataService not available in RememberMcpManager');
+			// Show error in webview
+			webviewView.webview.html = this.generateErrorHtml('Data service not available');
+			return;
+		}
+
 		// Initialize model and view
-		this._model = new CopilotUsageModel(this.rememberManager);
+		this._model = new CopilotUsageModel(unifiedDataService);
 		this._view = new CopilotUsageView(webviewView.webview, this.extensionUri);
 
 		// Set up data binding: model changes update the view
@@ -81,7 +90,7 @@ export class CopilotUsagePanel implements vscode.WebviewViewProvider, vscode.Dis
 		}
 
 		try {
-			this._model.clearStats();
+			await this._model.clearStats();
 			vscode.window.showInformationMessage('Model usage statistics cleared.');
 		} catch (error) {
 			console.error('Error clearing statistics:', error);
@@ -98,11 +107,42 @@ export class CopilotUsagePanel implements vscode.WebviewViewProvider, vscode.Dis
 		}
 
 		try {
-			this._model.refreshStats();
+			await this._model.refreshStats();
 		} catch (error) {
 			console.error('Error refreshing statistics:', error);
 			vscode.window.showErrorMessage('Failed to refresh usage statistics.');
 		}
+	}
+
+	/**
+     * Generate error HTML for display in webview
+     */
+	private generateErrorHtml(message: string): string {
+		return `<!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Error</title>
+            <style>
+                body { 
+                    font-family: var(--vscode-font-family); 
+                    color: var(--vscode-foreground);
+                    padding: 20px;
+                }
+                .error { 
+                    color: var(--vscode-errorForeground);
+                    text-align: center;
+                }
+            </style>
+        </head>
+        <body>
+            <div class="error">
+                <h3>Error</h3>
+                <p>${message}</p>
+            </div>
+        </body>
+        </html>`;
 	}
 
 	/**

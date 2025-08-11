@@ -57,7 +57,7 @@ export class CopilotUsageView {
                 </tbody>
             </table>
             
-            <button class="secondary" onclick="sendMessage('clearStats')" ${stats.sortedStats.length === 0 ? 'disabled' : ''}>Clear</button>
+            <button class="secondary" onclick="sendMessage('clearStats')" ${stats.isDataAvailable ? '' : 'disabled'}>Clear</button>
             <button onclick="sendMessage('refresh')">Refresh</button>
             
             ${WebviewUtils.getSharedScript()}
