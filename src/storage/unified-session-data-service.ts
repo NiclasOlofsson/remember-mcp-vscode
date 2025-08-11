@@ -74,7 +74,7 @@ export class UnifiedSessionDataService {
     async initialize(): Promise<{ sessionEvents: CopilotUsageEvent[]; logEntries: LogEntry[]; stats: SessionScanStats }> {
         return await this.initializationMutex.runExclusive(async () => {
             if (this.isInitialized) {
-                this.logger.appendLine('[UnifiedSessionDataService] Already initialized, returning cached data');
+                this.logger.trace('Already initialized, returning cached data');
                 return {
                     sessionEvents: this.cachedSessionEvents,
                     logEntries: this.cachedLogEntries,
@@ -88,7 +88,7 @@ export class UnifiedSessionDataService {
                 };
             }
 
-            this.logger.appendLine('[UnifiedSessionDataService] Initializing...');
+            this.logger.debug('Initializing UnifiedSessionDataService...');
             
             const scanResult = await this.scanAllData();
             
@@ -97,7 +97,7 @@ export class UnifiedSessionDataService {
             }
             
             this.isInitialized = true;
-            this.logger.appendLine(`[UnifiedSessionDataService] Initialized with ${scanResult.sessionEvents.length} session events, ${scanResult.logEntries.length} log entries`);
+            this.logger.info(`Initialized with ${scanResult.sessionEvents.length} session events, ${scanResult.logEntries.length} log entries`);
             return scanResult;
         });
     }
@@ -130,11 +130,11 @@ export class UnifiedSessionDataService {
                 this.cachedLogEntries = logEntries;
                 this.lastScanStats = stats;
                 
-                this.logger.appendLine(`[UnifiedSessionDataService] Scanned ${results.length} sessions, generated ${sessionEvents.length} session events and ${logEntries.length} log entries`);
+                this.logger.trace(`Scanned ${results.length} sessions, generated ${sessionEvents.length} session events and ${logEntries.length} log entries`);
                 
                 return { sessionEvents, logEntries, stats };
             } catch (error) {
-                this.logger.appendLine(`[UnifiedSessionDataService] Scan failed: ${error}`);
+                this.logger.error(`Scan failed: ${error}`);
                 throw error;
             }
         });
@@ -174,7 +174,7 @@ export class UnifiedSessionDataService {
      */
     onSessionEventsUpdated(callback: (events: CopilotUsageEvent[]) => void): void {
         this.sessionEventCallbacks.push(callback);
-        this.logger.appendLine(`[UnifiedSessionDataService] Session callback added - now have ${this.sessionEventCallbacks.length} callbacks`);
+        this.logger.trace(`Session callback added - now have ${this.sessionEventCallbacks.length} callbacks`);
     }
 
     /**
@@ -182,7 +182,7 @@ export class UnifiedSessionDataService {
      */
     onLogEntriesUpdated(callback: (entries: LogEntry[]) => void): void {
         this.logEventCallbacks.push(callback);
-        this.logger.appendLine(`[UnifiedSessionDataService] Log callback added - now have ${this.logEventCallbacks.length} callbacks`);
+        this.logger.trace(`Log callback added - now have ${this.logEventCallbacks.length} callbacks`);
     }
 
     /**
@@ -214,14 +214,14 @@ export class UnifiedSessionDataService {
         }
 
         // Start watching session files
-        this.logger.appendLine(`[UnifiedSessionDataService] Starting session file watching with ${this.sessionEventCallbacks.length} callbacks`);
+        this.logger.info(`Starting session file watching with ${this.sessionEventCallbacks.length} callbacks`);
         this.sessionScanner.startWatching(async (sessionResult: SessionScanResult) => {
             try {
-                this.logger.appendLine(`[UnifiedSessionDataService] REAL-TIME SESSION UPDATE: Received session ${sessionResult.session.sessionId}`);
+                this.logger.trace(`REAL-TIME  Received session ${sessionResult.session.sessionId}`);
                 
                 // Transform new/updated session to events
                 const newEvents = await this.sessionTransformer.transformSessionToEvents(sessionResult);
-                this.logger.appendLine(`[UnifiedSessionDataService] REAL-TIME SESSION UPDATE: Transformed to ${newEvents.length} events`);
+                this.logger.trace(`REAL-TIME  Transformed to ${newEvents.length} events`);
                 
                 // Update cached session events (replace events from same session) - protected by mutex
                 await this.sessionUpdateMutex.runExclusive(async () => {
@@ -234,38 +234,80 @@ export class UnifiedSessionDataService {
                     // Sort by timestamp
                     this.cachedSessionEvents.sort((a: CopilotUsageEvent, b: CopilotUsageEvent) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
                     
-                    this.logger.appendLine(`[UnifiedSessionDataService] REAL-TIME SESSION UPDATE: Cache updated from ${beforeCount} to ${this.cachedSessionEvents.length} events`);
+                    this.logger.trace(`REAL-TIME  Cache updated from ${beforeCount} to ${this.cachedSessionEvents.length} events`);
                 });
                 
                 // Notify session event callbacks
-                this.logger.appendLine(`[UnifiedSessionDataService] REAL-TIME SESSION UPDATE: Notifying ${this.sessionEventCallbacks.length} callbacks`);
+                this.logger.trace(`REAL-TIME  Notifying ${this.sessionEventCallbacks.length} callbacks`);
                 this.sessionEventCallbacks.forEach((callback, index) => {
                     try {
-                        this.logger.appendLine(`[UnifiedSessionDataService] REAL-TIME SESSION UPDATE: Calling callback ${index + 1}/${this.sessionEventCallbacks.length}`);
+                        this.logger.trace(`REAL-TIME  Calling callback ${index + 1}/${this.sessionEventCallbacks.length}`);
                         callback(this.cachedSessionEvents);
                     } catch (error) {
-                        this.logger.appendLine(`[UnifiedSessionDataService] Session callback ${index + 1} error: ${error}`);
+                        this.logger.error(` ${error}`);
                     }
                 });
                 
-                this.logger.appendLine(`[UnifiedSessionDataService] REAL-TIME SESSION UPDATE: Complete - ${newEvents.length} events from session ${sessionResult.session.sessionId}`);
+                this.logger.info(`REAL-TIME  Session update complete - ${newEvents.length} events from session ${sessionResult.session.sessionId}`);
             } catch (error) {
-                this.logger.appendLine(`[UnifiedSessionDataService] Error processing session update: ${error}`);
+                this.logger.error(`Error processing session update: ${error}`);
             }
         });
 
         // Start watching log files if enabled
         if (this.logScanner) {
-            this.logger.appendLine(`[UnifiedSessionDataService] Starting log file watching with ${this.logEventCallbacks.length} callbacks`);
+            this.logger.info(`Starting log file watching with ${this.logEventCallbacks.length} callbacks`);
             
-            // Since CopilotLogScanner no longer has callback registration,
-            // we need to manually poll or use a different approach
-            // For now, we'll just start the watcher without callbacks
+            // Register callback for log updates
+            this.logScanner.onLogUpdated(async (logResult: LogScanResult) => {
+                try {
+                    this.logger.trace(`REAL-TIME  Received ${logResult.logEntries.length} log entries`);
+                    
+                    if (logResult.logEntries.length > 0) {
+                        // Update cached log entries 
+                        const beforeCount = this.cachedLogEntries.length;
+                        
+                        // Add only new entries (avoid duplicates by checking timestamp and requestId)
+                        const newEntries = logResult.logEntries.filter(newEntry => 
+                            !this.cachedLogEntries.some(existingEntry => 
+                                existingEntry.requestId === newEntry.requestId && 
+                                existingEntry.timestamp.getTime() === newEntry.timestamp.getTime()
+                            )
+                        );
+                        
+                        if (newEntries.length > 0) {
+                            this.cachedLogEntries.push(...newEntries);
+                            
+                            // Sort by timestamp
+                            this.cachedLogEntries.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+                            
+                            this.logger.trace(`REAL-TIME  Cache updated from ${beforeCount} to ${this.cachedLogEntries.length} entries (${newEntries.length} new)`);
+                            
+                            // Notify log event callbacks with new entries
+                            this.logger.trace(`REAL-TIME  Notifying ${this.logEventCallbacks.length} callbacks`);
+                            this.logEventCallbacks.forEach((callback, index) => {
+                                try {
+                                    this.logger.trace(`REAL-TIME  Calling log callback ${index + 1}/${this.logEventCallbacks.length}`);
+                                    callback(newEntries); // Pass only new entries, not all cached entries
+                                } catch (error) {
+                                    this.logger.error(` ${error}`);
+                                }
+                            });
+                        }
+                    }
+                    
+                    this.logger.info(`REAL-TIME  Log update complete - ${logResult.logEntries.length} entries processed`);
+                } catch (error) {
+                    this.logger.error(`Error processing log update: ${error}`);
+                }
+            });
+            
+            // Start the log scanner watcher
             this.logScanner.startWatching();
         }
 
         this.isWatchingEnabled = true;
-        this.logger.appendLine('[UnifiedSessionDataService] Real-time updates enabled');
+        this.logger.info('Real-time updates enabled');
     }
 
     /**
@@ -281,7 +323,7 @@ export class UnifiedSessionDataService {
             this.logScanner.stopWatching();
         }
         this.isWatchingEnabled = false;
-        this.logger.appendLine('[UnifiedSessionDataService] Real-time updates disabled');
+        this.logger.info('Real-time updates disabled');
     }
 
     /**
@@ -325,7 +367,7 @@ export class UnifiedSessionDataService {
             this.logScanner.dispose();
         }
         this.isInitialized = false;
-        this.logger.appendLine('[UnifiedSessionDataService] Disposed');
+        this.logger.debug('Service disposed');
     }
 
     /**
@@ -336,7 +378,7 @@ export class UnifiedSessionDataService {
         await this.initializationMutex.runExclusive(async () => {
             this.isInitialized = false;
             this.stopRealTimeUpdates();
-            this.logger.appendLine('[UnifiedSessionDataService] Initialization state reset');
+            this.logger.debug('Initialization state reset');
         });
     }
 }

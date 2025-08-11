@@ -37,8 +37,8 @@ export interface CopilotChatRequest {
         }>;
     };
     
-    // Agent information
-    agent: {
+    // Agent information (optional - slash commands like /clear don't have an agent)
+    agent?: {
         id: string;                    // e.g., "github.copilot.editsAgent"
         name: string;                  // e.g., "agent"
         extensionId: string;           // e.g., "github.copilot"

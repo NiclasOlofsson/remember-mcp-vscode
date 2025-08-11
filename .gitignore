@@ -56,6 +56,11 @@ web_modules/
 # Optional stylelint cache
 .stylelintcache
 
+# TypeScript/ESLint/Webpack caches that can cause stale problems
+node_modules/.cache/
+.webpack-cache/
+.ts-node/
+
 # Optional REPL history
 .node_repl_history
 

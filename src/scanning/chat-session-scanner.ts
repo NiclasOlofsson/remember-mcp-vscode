@@ -35,7 +35,7 @@ export class ChatSessionScanner {
      * Find all chat session files across VS Code storage locations
      */
     async findAllChatSessionFiles(): Promise<string[]> {
-        this.logger.appendLine('[SessionScanner] Starting comprehensive session file scan...');
+        this.logger.info('Starting comprehensive session file scan...');
         
         const allFiles: string[] = [];
         const basePaths = this.getVSCodeStoragePaths();
@@ -44,13 +44,13 @@ export class ChatSessionScanner {
             try {
                 const files = await this.scanStorageLocation(basePath);
                 allFiles.push(...files);
-                this.logger.appendLine(`[SessionScanner] Found ${files.length} session files in ${basePath}`);
+                this.logger.debug(`Found ${files.length} session files in ${basePath}`);
             } catch (error) {
-                this.logger.appendLine(`[SessionScanner] Error scanning ${basePath}: ${error}`);
+                this.logger.error(`Error scanning ${basePath}: ${error}`);
             }
         }
         
-        this.logger.appendLine(`[SessionScanner] Total session files found: ${allFiles.length}`);
+        this.logger.info(`Total session files found: ${allFiles.length}`);
         return allFiles;
     }
 
@@ -112,13 +112,13 @@ export class ChatSessionScanner {
                     
                     // Skip files that are too large
                     if (stats.size > SESSION_SCAN_CONSTANTS.MAX_FILE_SIZE_MB * 1024 * 1024) {
-                        this.logger.appendLine(`[SessionScanner] Skipping large file: ${filePath} (${Math.round(stats.size / 1024 / 1024)}MB)`);
+                        this.logger.debug(`Skipping large file: ${filePath} (${Math.round(stats.size / 1024 / 1024)}MB)`);
                         continue;
                     }
                     
                     sessionFiles.push(filePath);
                 } catch (error) {
-                    this.logger.appendLine(`[SessionScanner] Error checking file ${filePath}: ${error}`);
+                    this.logger.error(`Error checking file ${filePath}: ${error}`);
                 }
             }
         } catch (error) {
@@ -142,7 +142,7 @@ export class ChatSessionScanner {
             
             // Validate session structure
             if (!this.isValidSession(session)) {
-                this.logger.appendLine(`[SessionScanner] Invalid session structure in ${filePath}`);
+                this.logger.error(`Invalid session structure in ${filePath}`);
                 return null;
             }
             
@@ -154,11 +154,11 @@ export class ChatSessionScanner {
             };
             
             // Log the result structure for debugging
-            this.logger.appendLine(`[SessionScanner] Created SessionScanResult with sessionFilePath: "${result.sessionFilePath}" (type: ${typeof result.sessionFilePath})`);
+            this.logger.debug(`Created SessionScanResult with sessionFilePath: "${result.sessionFilePath}" (type: ${typeof result.sessionFilePath})`);
             
             return result;
         } catch (error) {
-            this.logger.appendLine(`[SessionScanner] Error parsing session file ${filePath}: ${error}`);
+            this.logger.error(`Error parsing session file ${filePath}: ${error}`);
             return null;
         }
     }
@@ -169,7 +169,7 @@ export class ChatSessionScanner {
     async scanAllSessions(): Promise<{ results: SessionScanResult[]; stats: SessionScanStats }> {
         const startTime = Date.now();
         
-        this.logger.appendLine('[SessionScanner] Starting full session scan...');
+        this.logger.info('Starting full session scan...');
         
         const allFiles = await this.findAllChatSessionFiles();
         const results: SessionScanResult[] = [];
@@ -209,7 +209,7 @@ export class ChatSessionScanner {
             
             // Progress reporting
             if (allFiles.length > 100 && i % 100 === 0) {
-                this.logger.appendLine(`[SessionScanner] Processed ${i + batchSize}/${allFiles.length} files...`);
+                this.logger.debug(`Processed ${i + batchSize}/${allFiles.length} files...`);
             }
         }
         
@@ -225,7 +225,7 @@ export class ChatSessionScanner {
             newestSession
         };
         
-        this.logger.appendLine(`[SessionScanner] Scan complete: ${results.length} sessions, ${totalRequests} requests in ${scanDuration}ms`);
+        this.logger.info(`Scan complete: ${results.length} sessions, ${totalRequests} requests in ${scanDuration}ms`);
         
         return { results, stats };
     }
@@ -245,7 +245,7 @@ export class ChatSessionScanner {
         }
         
         this.isWatching = true;
-        this.logger.appendLine('[SessionScanner] Started watching for session file changes');
+        this.logger.info('Started watching for session file changes');
     }
 
     /**
@@ -264,7 +264,7 @@ export class ChatSessionScanner {
         }
         
         this.isWatching = false;
-        this.logger.appendLine('[SessionScanner] Stopped watching for session file changes');
+        this.logger.info('Stopped watching for session file changes');
     }
 
     /**
@@ -298,7 +298,7 @@ export class ChatSessionScanner {
                         this.watcherCallbacks.forEach(callback => callback(result));
                     }
                 } catch (error) {
-                    this.logger.appendLine(`[SessionScanner] Error handling file change ${uri.fsPath}: ${error}`);
+                    this.logger.error(`Error handling file change ${uri.fsPath}: ${error}`);
                 }
             }, this.watcherOptions.debounceMs);
         };
@@ -343,22 +343,71 @@ export class ChatSessionScanner {
      * Validate that a parsed object is a valid session
      */
     private isValidSession(obj: any): obj is CopilotChatSession {
-        return (
-            obj &&
-            typeof obj.sessionId === 'string' &&
-            typeof obj.creationDate === 'number' &&
-            typeof obj.version === 'number' &&
-            Array.isArray(obj.requests) &&
-            obj.requests.every((req: any) => 
-                req &&
-                typeof req.requestId === 'string' &&
-                typeof req.timestamp === 'number' &&
-                // modelId is optional - many requests legitimately don't have it
-                (req.modelId === undefined || typeof req.modelId === 'string') &&
-                req.message && typeof req.message.text === 'string' &&
-                req.agent && typeof req.agent.id === 'string'
-            )
-        );
+        if (!obj) {
+            return false;
+        }
+        
+        // Check required session fields
+        if (typeof obj.sessionId !== 'string') {
+            this.logger.trace(`Invalid sessionId: ${typeof obj.sessionId}`);
+            return false;
+        }
+        
+        if (typeof obj.creationDate !== 'number') {
+            this.logger.trace(`Invalid creationDate: ${typeof obj.creationDate}`);
+            return false;
+        }
+        
+        if (typeof obj.version !== 'number') {
+            this.logger.trace(`Invalid version: ${typeof obj.version}`);
+            return false;
+        }
+        
+        if (!Array.isArray(obj.requests)) {
+            this.logger.trace(`Invalid requests: ${typeof obj.requests}`);
+            return false;
+        }
+        
+        // Check each request structure
+        for (let i = 0; i < obj.requests.length; i++) {
+            const req = obj.requests[i];
+            
+            if (!req) {
+                this.logger.trace(`Request ${i} is falsy`);
+                return false;
+            }
+            
+            if (typeof req.requestId !== 'string') {
+                this.logger.trace(`Request ${i} invalid requestId: ${typeof req.requestId}`);
+                return false;
+            }
+            
+            if (typeof req.timestamp !== 'number') {
+                this.logger.trace(`Request ${i} invalid timestamp: ${typeof req.timestamp}`);
+                return false;
+            }
+            
+            // modelId is optional - many requests legitimately don't have it
+            if (req.modelId !== undefined && typeof req.modelId !== 'string') {
+                this.logger.trace(`Request ${i} invalid modelId: ${typeof req.modelId}`);
+                return false;
+            }
+            
+            if (!req.message || typeof req.message.text !== 'string') {
+                this.logger.trace(`Request ${i} invalid message: ${!req.message ? 'missing' : typeof req.message.text}`);
+                return false;
+            }
+            
+            // agent is optional - slash commands like /clear don't have an agent
+            if (req.agent !== undefined) {
+                if (typeof req.agent.id !== 'string') {
+                    this.logger.trace(`Request ${i} invalid agent.id: ${typeof req.agent.id}`);
+                    return false;
+                }
+            }
+        }
+        
+        return true;
     }
 
     /**

@@ -75,7 +75,7 @@ export class ServiceContainer {
      */
     getUnifiedSessionDataService(): UnifiedSessionDataService {
         if (!this._unifiedSessionDataService) {
-            this.logger.appendLine('[ServiceContainer] Creating UnifiedSessionDataService instance');
+            this.logger.info('Creating UnifiedSessionDataService instance');
             this._unifiedSessionDataService = new UnifiedSessionDataService(
                 this.logger,
                 this.extensionVersion,
@@ -110,7 +110,7 @@ export class ServiceContainer {
      * Dispose all services and reset the singleton
      */
     dispose(): void {
-        this.logger.appendLine('[ServiceContainer] Disposing services');
+        this.logger.info('Disposing services');
         
         if (this._unifiedSessionDataService) {
             this._unifiedSessionDataService.dispose();
@@ -118,7 +118,7 @@ export class ServiceContainer {
         }
         
         ServiceContainer.instance = null;
-        this.logger.appendLine('[ServiceContainer] Service container disposed');
+        this.logger.info('Service container disposed');
     }
 
     /**

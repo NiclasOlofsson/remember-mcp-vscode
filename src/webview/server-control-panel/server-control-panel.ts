@@ -1,12 +1,17 @@
 import * as vscode from 'vscode';
-import { RememberMcpManager, PrerequisiteChecker } from '../extension';
+import { RememberMcpManager, PrerequisiteChecker } from '../../extension';
+import { ILogger } from '../../types/logger';
 
 export class ServerControlPanel implements vscode.WebviewViewProvider {
     public static readonly viewType = 'remember-mcp-panel';
     private prerequisites: { python: boolean; pipx: boolean; pythonVersion?: string; autoInstallAttempted?: boolean } | null = null;
     private isInstalling = false;
 
-    constructor(private readonly extensionUri: vscode.Uri, private rememberManager: RememberMcpManager) {}
+    constructor(
+        private readonly extensionUri: vscode.Uri, 
+        private rememberManager: RememberMcpManager,
+        private readonly logger: ILogger
+    ) {}
 
     public async resolveWebviewView(
         webviewView: vscode.WebviewView,
@@ -56,13 +61,12 @@ export class ServerControlPanel implements vscode.WebviewViewProvider {
         webviewView.webview.html = this.getInstallingHtml();
         
         try {
-            const outputChannel = this.rememberManager['outputChannel'] as vscode.OutputChannel;
-            outputChannel.appendLine('Starting automatic pipx installation...');
+            this.logger.info('Starting automatic pipx installation...');
             
-            const success = await PrerequisiteChecker.installPipx(outputChannel);
+            const success = await PrerequisiteChecker.installPipx(this.logger);
             
             if (success) {
-                outputChannel.appendLine('pipx installation completed successfully!');
+                this.logger.info('pipx installation completed successfully!');
                 vscode.window.showInformationMessage('pipx installed successfully! Please restart VS Code to complete the setup.');
                 
                 // Mark that we attempted auto-install and clear cache
@@ -72,12 +76,11 @@ export class ServerControlPanel implements vscode.WebviewViewProvider {
                     this.prerequisites.autoInstallAttempted = true;
                 }
             } else {
-                outputChannel.appendLine('pipx installation failed. Please install manually.');
+                this.logger.warn('pipx installation failed. Please install manually.');
                 vscode.window.showErrorMessage('pipx installation failed. Please install manually using the instructions below.');
             }
         } catch (error) {
-            const outputChannel = this.rememberManager['outputChannel'] as vscode.OutputChannel;
-            outputChannel.appendLine(`pipx installation error: ${error}`);
+            this.logger.error(`pipx installation error: ${error}`);
             vscode.window.showErrorMessage('pipx installation failed. Please install manually using the instructions below.');
         } finally {
             this.isInstalling = false;

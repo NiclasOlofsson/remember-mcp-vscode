@@ -32,11 +32,11 @@ export class SessionDataTransformer {
                 const sessionEvents = this.transformSessionToEvents(scanResult);
                 allEvents.push(...sessionEvents);
             } catch (error) {
-                this.logger.appendLine(`[SessionTransformer] Error transforming session ${scanResult.session.sessionId}: ${error}`);
+                this.logger.error(`Error transforming session ${scanResult.session.sessionId}: ${error}`);
             }
         }
         
-        this.logger.appendLine(`[SessionTransformer] Transformed ${scanResults.length} sessions into ${allEvents.length} events`);
+        this.logger.info(`Transformed ${scanResults.length} sessions into ${allEvents.length} events`);
         return allEvents;
     }
 
@@ -45,7 +45,7 @@ export class SessionDataTransformer {
      */
     transformSessionToEvents(scanResult: SessionScanResult): CopilotUsageEvent[] {
         // Add defensive logging
-        this.logger.appendLine(`[SessionTransformer] transformSessionToEvents called with sessionFilePath: "${scanResult.sessionFilePath}" (type: ${typeof scanResult.sessionFilePath})`);
+        this.logger.trace(`transformSessionToEvents called with sessionFilePath: "${scanResult.sessionFilePath}" (type: ${typeof scanResult.sessionFilePath})`);
         
         const { session, sessionFilePath } = scanResult;
         const events: CopilotUsageEvent[] = [];
@@ -58,7 +58,7 @@ export class SessionDataTransformer {
                 const event = this.transformRequestToEvent(session, request, workspaceContext);
                 events.push(event);
             } catch (error) {
-                this.logger.appendLine(`[SessionTransformer] Error transforming request ${request.requestId}: ${error}`);
+                this.logger.error(`Error transforming request ${request.requestId}: ${error instanceof Error ? error.stack : error}`);
             }
         }
         
@@ -125,7 +125,7 @@ export class SessionDataTransformer {
      */
     extractSessionMetadata(scanResult: SessionScanResult): SessionMetadata {
         // Add defensive logging
-        this.logger.appendLine(`[SessionTransformer] extractSessionMetadata called with sessionFilePath: "${scanResult.sessionFilePath}" (type: ${typeof scanResult.sessionFilePath})`);
+        this.logger.trace(`extractSessionMetadata called with sessionFilePath: "${scanResult.sessionFilePath}" (type: ${typeof scanResult.sessionFilePath})`);
         
         const { session } = scanResult;
         const workspaceContext = this.extractWorkspaceContext(scanResult.sessionFilePath);
@@ -190,7 +190,7 @@ export class SessionDataTransformer {
     private extractWorkspaceContext(sessionFilePath: string): WorkspaceContext {
         // Add type guard to ensure sessionFilePath is a valid string
         if (!sessionFilePath || typeof sessionFilePath !== 'string') {
-            this.logger.appendLine(`[SessionTransformer] Invalid sessionFilePath: ${sessionFilePath} (type: ${typeof sessionFilePath})`);
+            this.logger.error(`Invalid sessionFilePath: ${sessionFilePath} (type: ${typeof sessionFilePath})`);
             return {
                 workspaceHash: 'unknown',
                 storagePath: 'unknown'
@@ -270,8 +270,15 @@ export class SessionDataTransformer {
         // Try to infer language from file extensions in content references
         for (const ref of request.contentReferences) {
             if (ref.reference?.uri) {
-                const filePath = ref.reference.uri;
-                const ext = path.extname(filePath).toLowerCase();
+                const uriValue = ref.reference.uri;
+                
+                // Add defensive type checking - uri might be an object instead of string
+                if (typeof uriValue !== 'string') {
+                    this.logger.trace(`Skipping non-string URI in content reference: ${typeof uriValue}`);
+                    continue;
+                }
+                
+                const ext = path.extname(uriValue).toLowerCase();
                 
                 const languageMap: Record<string, string> = {
                     '.ts': 'typescript',
@@ -317,8 +324,16 @@ export class SessionDataTransformer {
         // Return the first content reference URI (anonymized)
         const firstRef = request.contentReferences[0];
         if (firstRef.reference?.uri) {
+            const uriValue = firstRef.reference.uri;
+            
+            // Add defensive type checking - uri might be an object instead of string
+            if (typeof uriValue !== 'string') {
+                this.logger.trace(`Skipping non-string URI in content reference: ${typeof uriValue}`);
+                return undefined;
+            }
+            
             // Anonymize the path by keeping only the filename and extension
-            const fileName = path.basename(firstRef.reference.uri);
+            const fileName = path.basename(uriValue);
             return fileName;
         }
         

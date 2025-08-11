@@ -38,7 +38,7 @@ export class UsageStorageManager {
         }
         
         this.sessionDataService = ServiceContainer.getInstance().getUnifiedSessionDataService();
-        logger.appendLine('[UsageStorageManager] Using shared UnifiedSessionDataService from service container');
+        logger.info('Using shared UnifiedSessionDataService from service container');
     }
 
     /**

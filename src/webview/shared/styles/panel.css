@@ -1,0 +1,95 @@
+/* Shared VS Code Panel Styles */
+/* Used across all webview panels for consistent look and feel */
+
+body {
+    font-family: var(--vscode-font-family);
+    font-size: var(--vscode-font-size);
+    color: var(--vscode-foreground);
+    background-color: var(--vscode-sideBar-background);
+    margin: 0;
+    padding: 8px;
+}
+
+h3 {
+    margin: 0 0 8px 0;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--vscode-sideBarTitle-foreground);
+}
+
+.summary {
+    margin-bottom: 8px;
+    font-size: 12px;
+    color: var(--vscode-descriptionForeground);
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 8px;
+    font-size: 12px;
+}
+
+th {
+    text-align: left;
+    padding: 4px 8px 4px 0;
+    font-weight: 600;
+    color: var(--vscode-sideBarTitle-foreground);
+    border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border);
+}
+
+td {
+    padding: 2px 8px 2px 0;
+    color: var(--vscode-sideBar-foreground);
+}
+
+td.count {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+tr:hover {
+    background-color: var(--vscode-list-hoverBackground);
+}
+
+.no-data {
+    text-align: center;
+    color: var(--vscode-descriptionForeground);
+    font-style: italic;
+    padding: 16px 0;
+}
+
+button {
+    width: 100%;
+    padding: 4px 8px;
+    margin: 2px 0;
+    border: none;
+    border-radius: 2px;
+    font-size: 11px;
+    cursor: pointer;
+    font-family: var(--vscode-font-family);
+}
+
+button:not(:disabled) {
+    background-color: var(--vscode-button-background);
+    color: var(--vscode-button-foreground);
+}
+
+button:not(:disabled):hover {
+    background-color: var(--vscode-button-hoverBackground);
+}
+
+button:disabled {
+    background-color: var(--vscode-button-secondaryBackground);
+    color: var(--vscode-button-secondaryForeground);
+    cursor: default;
+}
+
+button.secondary:not(:disabled) {
+    background-color: var(--vscode-button-secondaryBackground);
+    color: var(--vscode-button-secondaryForeground);
+}
+
+button.secondary:not(:disabled):hover {
+    background-color: var(--vscode-button-secondaryHoverBackground);
+}

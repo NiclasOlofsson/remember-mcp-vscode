@@ -64,6 +64,7 @@ export class CopilotLogScanner {
     private extensionContext?: vscode.ExtensionContext;
     private lastFilePosition: number = 0;
     private currentLogPath: string | null = null;
+    private logUpdateCallbacks: Array<(logResult: LogScanResult) => void> = [];
 
     constructor(
         private readonly logger: ILogger,
@@ -78,7 +79,7 @@ export class CopilotLogScanner {
     async findLogPath(): Promise<string | null> {
         try {
             if (!this.extensionContext) {
-                this.logger.appendLine('[CopilotLogScanner] No extension context provided - cannot access session logs');
+                this.logger.debug('No extension context provided - cannot access session logs');
                 return null;
             }
 
@@ -86,22 +87,22 @@ export class CopilotLogScanner {
             const sessionLogUri = this.extensionContext.logUri;
             const sessionLogDir = sessionLogUri.fsPath;
             
-            this.logger.appendLine(`[CopilotLogScanner] Current session log directory (extension): ${sessionLogDir}`);
+            this.logger.trace(`Current session log directory (extension): ${sessionLogDir}`);
 
             // Navigate to parent exthost directory, then find GitHub.copilot-chat
             const exthostDir = path.dirname(sessionLogDir);
             const copilotLogDir = path.join(exthostDir, 'GitHub.copilot-chat');
             
-            this.logger.appendLine(`[CopilotLogScanner] Looking for Copilot log directory: ${copilotLogDir}`);
+            this.logger.trace(`Looking for Copilot log directory: ${copilotLogDir}`);
             
             try {
                 const stat = await fs.stat(copilotLogDir);
                 if (!stat.isDirectory()) {
-                    this.logger.appendLine('[CopilotLogScanner] Copilot log path exists but is not a directory');
+                    this.logger.trace('Copilot log path exists but is not a directory');
                     return null;
                 }
             } catch (error) {
-                this.logger.appendLine(`[CopilotLogScanner] Copilot log directory does not exist: ${copilotLogDir}`);
+                this.logger.warn(`Copilot log directory does not exist: ${copilotLogDir}`);
                 return null;
             }
 
@@ -111,15 +112,15 @@ export class CopilotLogScanner {
             
             if (logFile) {
                 const logPath = path.join(copilotLogDir, logFile);
-                this.logger.appendLine(`[CopilotLogScanner] Found Copilot log file: ${logPath}`);
+                this.logger.debug(`Found Copilot log file: ${logPath}`);
                 return logPath;
             } else {
-                this.logger.appendLine('[CopilotLogScanner] No .log file found in Copilot directory');
-                this.logger.appendLine(`[CopilotLogScanner] Available files: ${files.join(', ')}`);
+                this.logger.trace('No .log file found in Copilot directory');
+                this.logger.trace(`Available files: ${files.join(', ')}`);
                 return null;
             }
         } catch (error) {
-            this.logger.appendLine(`[CopilotLogScanner] Error finding log path: ${error}`);
+            this.logger.error(`Error finding log path: ${error}`);
             return null;
         }
     }
@@ -133,7 +134,7 @@ export class CopilotLogScanner {
             
             // If file was truncated or is smaller than last position, reset
             if (stats.size < this.lastFilePosition) {
-                this.logger.appendLine(`[CopilotLogScanner] File truncated or rotated, resetting position`);
+                this.logger.trace(`File truncated or rotated, resetting position`);
                 this.lastFilePosition = 0;
             }
             
@@ -154,11 +155,11 @@ export class CopilotLogScanner {
             this.lastFilePosition = stats.size;
             
             const newContent = buffer.toString('utf-8');
-            this.logger.appendLine(`[CopilotLogScanner] Read ${newContentSize} bytes of new content from position ${this.lastFilePosition - newContentSize}`);
+            this.logger.trace(`Read ${newContentSize} bytes of new content from position ${this.lastFilePosition - newContentSize}`);
             
             return newContent;
         } catch (error) {
-            this.logger.appendLine(`[CopilotLogScanner] Error reading new content: ${error}`);
+            this.logger.error(`Error reading new content: ${error}`);
             return '';
         }
     }
@@ -175,9 +176,9 @@ export class CopilotLogScanner {
         try {
             // Just poke the file to force OS flush - don't process content
             await fs.stat(this.currentLogPath);
-            this.logger.appendLine(`[CopilotLogScanner] FORCE-FLUSH: File poked to trigger OS flush`);
+            this.logger.trace(`FORCE-FLUSH: File poked to trigger OS flush`);
         } catch (error) {
-            this.logger.appendLine(`[CopilotLogScanner] FORCE-FLUSH ERROR: ${error}`);
+            this.logger.error(`FORCE-FLUSH ERROR: ${error}`);
         }
     }
 
@@ -189,9 +190,9 @@ export class CopilotLogScanner {
             const stats = await fs.stat(logPath);
             this.lastFilePosition = stats.size;
             this.currentLogPath = logPath;
-            this.logger.appendLine(`[CopilotLogScanner] Initialized file position to ${this.lastFilePosition} for: ${logPath}`);
+            this.logger.trace(`Initialized file position to ${this.lastFilePosition} for: ${logPath}`);
         } catch (error) {
-            this.logger.appendLine(`[CopilotLogScanner] Error initializing file position: ${error}`);
+            this.logger.error(`Error initializing file position: ${error}`);
             this.lastFilePosition = 0;
         }
     }
@@ -226,29 +227,29 @@ export class CopilotLogScanner {
             
             const lines = content.split('\n').filter(line => line.trim());
 
-            this.logger.appendLine(`[CopilotLogScanner] Processing ${lines.length} new lines`);
+            this.logger.trace(`Processing ${lines.length} new lines`);
 
             // Use multi-line parsing for complete 3-line request sequences
             const logEntries = this.parseMultiLineRequests(content);
-            this.logger.appendLine(`[CopilotLogScanner] Found ${logEntries.length} complete 3-line request sequences`);
+            this.logger.trace(`Found ${logEntries.length} complete 3-line request sequences`);
             
             // Log detailed information about each multi-line match
             logEntries.forEach((entry: LogEntry, index: number) => {
-                this.logger.appendLine(`[CopilotLogScanner] Multi-line match ${index + 1}:`);
-                this.logger.appendLine(`  Timestamp: ${entry.timestamp.toISOString()} (${entry.timestamp.toLocaleString()})`);
-                this.logger.appendLine(`  Request ID: ${entry.requestId}`);
-                this.logger.appendLine(`  ccreq ID: ${entry.ccreqId || 'N/A'}`);
-                this.logger.appendLine(`  Finish Reason: ${entry.finishReason || 'N/A'}`);
-                this.logger.appendLine(`  Model: ${entry.modelName}`);
-                this.logger.appendLine(`  Duration: ${entry.responseTime}ms`);
-                this.logger.appendLine(`  Context: ${entry.context || 'N/A'}`);
-                this.logger.appendLine(`  Status: ${entry.status}`);
+                this.logger.trace(`Multi-line match ${index + 1}:`);
+                this.logger.trace(`  Timestamp: ${entry.timestamp.toISOString()} (${entry.timestamp.toLocaleString()})`);
+                this.logger.trace(`  Request ID: ${entry.requestId}`);
+                this.logger.trace(`  ccreq ID: ${entry.ccreqId || 'N/A'}`);
+                this.logger.trace(`  Finish Reason: ${entry.finishReason || 'N/A'}`);
+                this.logger.trace(`  Model: ${entry.modelName}`);
+                this.logger.trace(`  Duration: ${entry.responseTime}ms`);
+                this.logger.trace(`  Context: ${entry.context || 'N/A'}`);
+                this.logger.trace(`  Status: ${entry.status}`);
             });
 
-            this.logger.appendLine(`[CopilotLogScanner] Found ${logEntries.length} entries using multi-line parsing`);
+            this.logger.debug(`Found ${logEntries.length} entries using multi-line parsing`);
             return { logEntries };
         } catch (error) {
-            this.logger.appendLine(`[CopilotLogScanner] Error reading log file: ${error}`);
+            this.logger.error(`Error reading log file: ${error}`);
             throw error;
         }
     }
@@ -292,7 +293,7 @@ export class CopilotLogScanner {
                 
                 entries.push(entry);
             } catch (error) {
-                this.logger.appendLine(`[CopilotLogScanner] Error parsing multi-line match: ${error}`);
+                this.logger.error(`Error parsing multi-line match: ${error}`);
             }
         }
         
@@ -301,123 +302,83 @@ export class CopilotLogScanner {
 
     /**
      * Start watching the log file for changes
-     * Uses directory watching to detect log file creation if it doesn't exist yet
-     * Initializes file position to current end of file to avoid reading old content
-     * Also starts periodic force-flush checking to catch delayed writes
+     * Uses a single *.log pattern watcher to handle creation, changes, and deletion
      */
     async startWatching(): Promise<void> {
         if (this.isWatching) {
-            this.logger.appendLine('[CopilotLogScanner] Already watching, skipping');
+            this.logger.trace('Already watching, skipping');
             return;
         }
 
-        // Always enable watching
-        const logPath = await this.findLogPath();
-        if (logPath) {
-            await this.setupFileWatcher(logPath);
-        } else {
-            await this.setupDirectoryWatcher();
-        }
+        await this.setupLogWatcher();
     }
 
     /**
-     * Set up file watcher for an existing log file
+     * Set up unified log watcher using *.log pattern
      */
-    private async setupFileWatcher(logPath: string): Promise<void> {
-        await this.initializeFilePosition(logPath);
-        this.logger.appendLine(`[CopilotLogScanner] Setting up file watcher for existing log: ${logPath}`);
-        this.watcher = new ForceFileWatcher(
-            new vscode.RelativePattern(path.dirname(logPath), path.basename(logPath)),
-            1000, // Force flush every 1s to catch delayed log writes
-            300   // Light debouncing (300ms) to prevent rapid-fire events
-        );
-        this.watcher.onDidChange(async () => {
-            this.logger.appendLine(`[CopilotLogScanner] REAL-TIME: Log file changed detected - ${logPath}`);
-            try {
-                const result = await this.scanLogFile(logPath);
-                this.logger.appendLine(`[CopilotLogScanner] REAL-TIME: Scan complete - ${result.logEntries.length} entries found`);
-            } catch (error) {
-                this.logger.appendLine(`[CopilotLogScanner] REAL-TIME ERROR during watch scan: ${error}`);
-            }
-        });
-        this.watcher.onDidCreate(() => {
-            this.logger.appendLine(`[CopilotLogScanner] REAL-TIME: Log file created - ${logPath}`);
-        });
-        this.watcher.onDidDelete(() => {
-            this.logger.appendLine(`[CopilotLogScanner] REAL-TIME: Log file deleted - ${logPath}`);
-            this.switchToDirectoryWatching();
-        });
-        this.watcher.start();
-        this.isWatching = true;
-        this.logger.appendLine(`[CopilotLogScanner] Successfully started watching log file: ${logPath}`);
-    }
-
-    /**
-     * Set up directory watcher to detect log file creation
-     */
-    private async setupDirectoryWatcher(): Promise<void> {
+    private async setupLogWatcher(): Promise<void> {
         if (!this.extensionContext) {
-            this.logger.appendLine('[CopilotLogScanner] Cannot set up directory watcher - no extension context');
+            this.logger.debug('Cannot set up log watcher - no extension context');
             return;
         }
+        
         try {
             const sessionLogUri = this.extensionContext.logUri;
             const sessionLogDir = sessionLogUri.fsPath;
             const exthostDir = path.dirname(sessionLogDir);
             const copilotLogDir = path.join(exthostDir, 'GitHub.copilot-chat');
-            this.logger.appendLine(`[CopilotLogScanner] Log file not found, setting up directory watcher for: ${copilotLogDir}`);
+            
+            this.logger.trace(`Setting up *.log pattern watcher for: ${copilotLogDir}`);
+            
             this.watcher = new ForceFileWatcher(
                 new vscode.RelativePattern(copilotLogDir, '*.log'),
                 1000, // Force flush every 1s to catch delayed log writes
                 300   // Light debouncing (300ms) to prevent rapid-fire events
             );
+
             this.watcher.onDidCreate(async (uri) => {
                 const createdFile = uri.fsPath;
-                this.logger.appendLine(`[CopilotLogScanner] REAL-TIME: New file created in Copilot directory - ${createdFile}`);
-                if (createdFile.endsWith('.log')) {
-                    this.logger.appendLine(`[CopilotLogScanner] REAL-TIME: Copilot log file created! Switching to file watcher - ${createdFile}`);
-                    this.watcher?.dispose();
-                    await this.setupFileWatcher(createdFile);
-                }
+                this.logger.info(`REAL-TIME: Log file created - ${createdFile}`);
+                await this.initializeFilePosition(createdFile);
             });
+
             this.watcher.onDidChange(async (uri) => {
                 const changedFile = uri.fsPath;
-                if (changedFile.endsWith('.log')) {
-                    this.logger.appendLine(`[CopilotLogScanner] REAL-TIME: Copilot log file changed - ${changedFile}`);
-                    try {
-                        const result = await this.scanLogFile(changedFile);
-                        this.logger.appendLine(`[CopilotLogScanner] REAL-TIME: Directory scan complete - ${result.logEntries.length} entries found`);
-                    } catch (error) {
-                        this.logger.appendLine(`[CopilotLogScanner] REAL-TIME ERROR during directory watch scan: ${error}`);
-                    }
+                this.logger.trace(`REAL-TIME: Log file changed - ${changedFile}`);
+                try {
+                    const result = await this.scanLogFile(changedFile);
+                    this.logger.info(`REAL-TIME: Scan complete - ${result.logEntries.length} entries found`);
+                    
+                    // Notify callbacks about new entries
+                    this.notifyLogUpdateCallbacks(result);
+                } catch (error) {
+                    this.logger.error(`REAL-TIME ERROR during watch scan: ${error}`);
                 }
             });
+
+            this.watcher.onDidDelete((uri) => {
+                const deletedFile = uri.fsPath;
+                this.logger.info(`REAL-TIME: Log file deleted - ${deletedFile}`);
+                if (this.currentLogPath === deletedFile) {
+                    this.logger.trace(`Current log file was deleted, resetting position`);
+                    this.lastFilePosition = 0;
+                    this.currentLogPath = null;
+                }
+            });
+
             this.watcher.start();
             this.isWatching = true;
-            this.logger.appendLine(`[CopilotLogScanner] Successfully started directory watching for log file creation`);
-            this.logger.appendLine(`[CopilotLogScanner] Watch pattern: ${copilotLogDir}`);
+            this.logger.debug(`Successfully started *.log pattern watching`);
+            this.logger.trace(`Watch pattern: ${copilotLogDir}/*.log`);
+            
+            // Initialize file position for existing log file if found
+            const existingLogPath = await this.findLogPath();
+            if (existingLogPath) {
+                await this.initializeFilePosition(existingLogPath);
+            }
         } catch (error) {
-            this.logger.appendLine(`[CopilotLogScanner] Error setting up directory watcher: ${error}`);
+            this.logger.error(`Error setting up log watcher: ${error}`);
         }
-    }
-
-    /**
-     * Switch from file watching to directory watching (e.g., when file is deleted)
-     */
-    private async switchToDirectoryWatching(): Promise<void> {
-        this.logger.appendLine(`[CopilotLogScanner] Switching from file watcher to directory watcher`);
-        
-        if (this.watcher) {
-            this.watcher.dispose();
-            this.watcher = undefined;
-        }
-        
-        this.isWatching = false;
-        this.lastFilePosition = 0;
-        this.currentLogPath = null;
-        
-        // Set up directory watching
-        await this.setupDirectoryWatcher();
     }
 
     /**
@@ -429,10 +390,8 @@ export class CopilotLogScanner {
             this.watcher = undefined;
         }
         this.isWatching = false;
-        this.logger.appendLine('[CopilotLogScanner] Stopped watching log file');
+        this.logger.info('Stopped watching log file');
     }
-
-    // Removed callback registration and notification logic
 
     /**
      * Get watching status
@@ -450,7 +409,42 @@ export class CopilotLogScanner {
      */
     resetFilePosition(): void {
         this.lastFilePosition = 0;
-        this.logger.appendLine('[CopilotLogScanner] File position reset to beginning');
+        this.logger.trace('File position reset to beginning');
+    }
+
+    /**
+     * Register callback for log updates
+     */
+    onLogUpdated(callback: (logResult: LogScanResult) => void): void {
+        this.logUpdateCallbacks.push(callback);
+        this.logger.trace(`Log update callback registered - now have ${this.logUpdateCallbacks.length} callbacks`);
+    }
+
+    /**
+     * Remove log update callback
+     */
+    removeLogUpdateCallback(callback: (logResult: LogScanResult) => void): void {
+        const index = this.logUpdateCallbacks.indexOf(callback);
+        if (index > -1) {
+            this.logUpdateCallbacks.splice(index, 1);
+            this.logger.trace(`Log update callback removed - now have ${this.logUpdateCallbacks.length} callbacks`);
+        }
+    }
+
+    /**
+     * Notify callbacks about new log entries
+     */
+    private notifyLogUpdateCallbacks(logResult: LogScanResult): void {
+        if (logResult.logEntries.length > 0 && this.logUpdateCallbacks.length > 0) {
+            this.logger.trace(`Notifying ${this.logUpdateCallbacks.length} callbacks about ${logResult.logEntries.length} new log entries`);
+            this.logUpdateCallbacks.forEach((callback, index) => {
+                try {
+                    callback(logResult);
+                } catch (error) {
+                    this.logger.trace(`Log update callback ${index + 1} error: ${error}`);
+                }
+            });
+        }
     }
 
     /**
@@ -459,21 +453,21 @@ export class CopilotLogScanner {
      */
     async manualForceFlush(): Promise<LogScanResult | null> {
         if (!this.currentLogPath) {
-            this.logger.appendLine('[CopilotLogScanner] Manual force flush requested but no log path available');
+            this.logger.trace('Manual force flush requested but no log path available');
             return null;
         }
 
-        this.logger.appendLine('[CopilotLogScanner] Manual force flush triggered');
+        this.logger.trace('Manual force flush triggered');
         try {
             const result = await this.scanLogFile(this.currentLogPath);
             if (result.logEntries.length > 0) {
-                this.logger.appendLine(`[CopilotLogScanner] Manual force flush found ${result.logEntries.length} entries`);
+                this.logger.trace(`Manual force flush found ${result.logEntries.length} entries`);
             } else {
-                this.logger.appendLine('[CopilotLogScanner] Manual force flush found no new entries');
+                this.logger.trace('Manual force flush found no new entries');
             }
             return result;
         } catch (error) {
-            this.logger.appendLine(`[CopilotLogScanner] Manual force flush error: ${error}`);
+            this.logger.error(`Manual force flush error: ${error}`);
             return null;
         }
     }

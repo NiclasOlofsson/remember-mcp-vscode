@@ -2,11 +2,11 @@ import * as vscode from 'vscode';
 
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import { CopilotUsageHistoryPanel } from './webview/copilot-usage-history-panel';
-import { ServerControlPanel } from './webview/server-control-panel';
-import { CopilotUsagePanel } from './webview/copilot-usage-panel/copilot-usage-panel';
+import { CopilotUsageHistoryPanel } from './webview/copilot-usage-history-panel/index';
+import { ServerControlPanel } from './webview/server-control-panel/index';
+import { CopilotUsagePanel } from './webview/copilot-usage-panel';
 import { UnifiedSessionDataService } from './storage/unified-session-data-service';
-import { VSCodeLogger } from './types/logger';
+import { VSCodeLogger, ILogger } from './types/logger';
 import { ServiceContainer } from './types/service-container';
 
 const execAsync = promisify(exec);
@@ -54,10 +54,10 @@ export class PrerequisiteChecker {
         return results;
     }
 
-    static async installPipx(outputChannel?: vscode.OutputChannel): Promise<boolean> {
+    static async installPipx(logger?: ILogger): Promise<boolean> {
         const debug = (msg: string) => {
-            if (outputChannel) {
-                outputChannel.appendLine(`[PIPX INSTALL] ${msg}`);
+            if (logger) {
+                logger.debug(msg);
             }
         };
 
@@ -171,14 +171,21 @@ export class UsageStatsManager {
 }
 
 export class RememberMcpManager {
-    private outputChannel: vscode.OutputChannel;
+    private outputChannel: vscode.LogOutputChannel;
+    private logger: ILogger;
     private statusBarItem: vscode.StatusBarItem;
     private mcpProvider: vscode.Disposable | null = null;
     public readonly usageStatsManager: UsageStatsManager;
     private unifiedDataService?: UnifiedSessionDataService;
     
-    constructor(private context?: vscode.ExtensionContext) {
-        this.outputChannel = vscode.window.createOutputChannel('Remember MCP');
+    constructor(
+        private context?: vscode.ExtensionContext, 
+        outputChannel?: vscode.LogOutputChannel,
+        logger?: ILogger
+    ) {
+        this.outputChannel = outputChannel || vscode.window.createOutputChannel('Remember MCP', { log: true });
+        // Create logger if not provided, using the output channel
+        this.logger = logger || new VSCodeLogger(this.outputChannel);
         this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
         this.statusBarItem.command = 'remember-mcp.showPanel';
         this.usageStatsManager = new UsageStatsManager();
@@ -205,7 +212,7 @@ export class RememberMcpManager {
             if (ServiceContainer.isInitialized()) {
                 this.unifiedDataService = ServiceContainer.getInstance().getUnifiedSessionDataService();
             } else {
-                this.outputChannel.appendLine('[RememberMcpManager] WARNING: ServiceContainer not initialized, cannot get shared service');
+                this.logger.warn('WARNING: ServiceContainer not initialized, cannot get shared service');
                 return;
             }
 
@@ -221,9 +228,9 @@ export class RememberMcpManager {
 
             // Initialize the service if not already initialized
             await this.unifiedDataService.initialize();
-            this.outputChannel.appendLine('[RememberMcpManager] Connected to shared unified data service for usage tracking');
+            this.logger.info('Connected to shared unified data service for usage tracking');
         } catch (error) {
-            this.outputChannel.appendLine(`[RememberMcpManager] Failed to connect to unified data service: ${error}`);
+            this.logger.error(`Failed to connect to unified data service: ${error}`);
         }
     }
 
@@ -274,7 +281,7 @@ export class RememberMcpManager {
 
     async startServer(): Promise<void> {
         if (this.mcpProvider) {
-            this.outputChannel.appendLine('Remember MCP Server is already running');
+            this.logger.info('Remember MCP Server is already running');
             return;
         }
 
@@ -284,28 +291,28 @@ export class RememberMcpManager {
         // Check VS Code MCP settings
         const chatConfig = vscode.workspace.getConfiguration('chat');
         const mcpEnabled = chatConfig.get('mcp.enabled');
-        this.outputChannel.appendLine(`VS Code chat.mcp.enabled setting: ${mcpEnabled}`);
+        this.logger.debug(`VS Code chat.mcp.enabled setting: ${mcpEnabled}`);
         
         if (mcpEnabled === false) {
-            this.outputChannel.appendLine('WARNING: MCP is disabled in VS Code settings');
+            this.logger.warn('WARNING: MCP is disabled in VS Code settings');
             vscode.window.showWarningMessage('MCP is disabled in VS Code settings. Enable "chat.mcp.enabled" to use the Remember MCP Server.');
             this.updateStatusBar('error');
             return;
         }
         
-        this.outputChannel.appendLine(`Registering Remember MCP Server with command: ${serverCommand}`);
+        this.logger.info(`Registering Remember MCP Server with command: ${serverCommand}`);
 
         try {
             // Parse command and arguments
             const [command, ...args] = serverCommand.split(' ');
             
-            this.outputChannel.appendLine(`Command: ${command}`);
-            this.outputChannel.appendLine(`Arguments: ${JSON.stringify(args)}`);
+            this.logger.debug(`Command: ${command}`);
+            this.logger.debug(`Arguments: ${JSON.stringify(args)}`);
             
             // Register the MCP server using the official VS Code MCP API
             this.mcpProvider = vscode.lm.registerMcpServerDefinitionProvider('remember-mcp-provider', {
                 provideMcpServerDefinitions: async () => {
-                    this.outputChannel.appendLine('Providing MCP server definition');
+                    this.logger.debug('Providing MCP server definition');
                     const serverDef = new vscode.McpStdioServerDefinition(
                         'Remember MCP (Mode Manager)',
                         command,
@@ -313,32 +320,32 @@ export class RememberMcpManager {
                         {}, // environment variables
                         '1.0.0' // version
                     );
-                    this.outputChannel.appendLine(`Server definition created for command: ${command}`);
+                    this.logger.debug(`Server definition created for command: ${command}`);
                     return [serverDef];
                 },
                 resolveMcpServerDefinition: async (server) => {
-                    this.outputChannel.appendLine(`Resolving MCP server definition for: ${command}`);
+                    this.logger.debug(`Resolving MCP server definition for: ${command}`);
                     return server;
                 }
             });
 
             this.updateStatusBar('running');
-            this.outputChannel.appendLine('Remember MCP Server provider registered successfully');
+            this.logger.info('Remember MCP Server provider registered successfully');
             vscode.window.showInformationMessage('Remember MCP Server registered with VS Code');
 
             // Check for available tools after a short delay
             setTimeout(() => {
                 const tools = vscode.lm.tools;
-                this.outputChannel.appendLine(`Available LM tools: ${tools.length}`);
+                this.logger.debug(`Available LM tools: ${tools.length}`);
                 if (tools.length > 0) {
-                    this.outputChannel.appendLine(`Tool names: ${tools.map(t => t.name).join(', ')}`);
+                    this.logger.debug(`Tool names: ${tools.map(t => t.name).join(', ')}`);
                 } else {
-                    this.outputChannel.appendLine('No tools are currently available to VS Code');
+                    this.logger.debug('No tools are currently available to VS Code');
                 }
             }, 3000);
 
         } catch (error) {
-            this.outputChannel.appendLine(`Failed to register Remember MCP Server: ${error}`);
+            this.logger.error(`Failed to register Remember MCP Server: ${error}`);
             this.updateStatusBar('error');
             vscode.window.showErrorMessage(`Failed to register Remember MCP Server: ${error}`);
         }
@@ -346,15 +353,15 @@ export class RememberMcpManager {
 
     stopServer(): void {
         if (!this.mcpProvider) {
-            this.outputChannel.appendLine('Remember MCP Server provider is not registered');
+            this.logger.debug('Remember MCP Server provider is not registered');
             return;
         }
 
-        this.outputChannel.appendLine('Unregistering Remember MCP Server provider...');
+        this.logger.info('Unregistering Remember MCP Server provider...');
         this.mcpProvider.dispose();
         this.mcpProvider = null;
         this.updateStatusBar('stopped');
-        this.outputChannel.appendLine('Remember MCP Server provider unregistered');
+        this.logger.info('Remember MCP Server provider unregistered');
         vscode.window.showInformationMessage('Remember MCP Server unregistered');
     }
 
@@ -374,7 +381,7 @@ export class RememberMcpManager {
             this.unifiedDataService.dispose();
         }
         this.usageStatsManager.dispose();
-        this.outputChannel.dispose();
+        // Note: outputChannel disposal is handled by the extension context
         this.statusBarItem.dispose();
     }
 }
@@ -398,7 +405,8 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.window.showInformationMessage('Remember MCP Extension Activated!');
 
     // Initialize the service container early - this ensures single instances
-    const logger = new VSCodeLogger(vscode.window.createOutputChannel('Remember MCP Services'));
+    const logChannel = vscode.window.createOutputChannel('Remember MCP', { log: true });
+    const logger = new VSCodeLogger(logChannel);
     const serviceContainer = ServiceContainer.initialize({
         extensionContext: context,
         logger,
@@ -448,8 +456,8 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
 
-    // Create Remember MCP manager with context for unified data service
-    const rememberManager = new RememberMcpManager(context);
+    // Create Remember MCP manager with context for unified data service and shared output channel
+    const rememberManager = new RememberMcpManager(context, logChannel, logger);
 
     // Register Copilot Usage panel provider
     const usagePanelProvider = new CopilotUsagePanel(context.extensionUri, rememberManager);
@@ -458,14 +466,13 @@ export function activate(context: vscode.ExtensionContext) {
     );
 
     // Register enhanced Copilot Usage History panel provider
-    const outputChannel = rememberManager['outputChannel'] as vscode.OutputChannel;
-    const usageHistoryPanelProvider = new CopilotUsageHistoryPanel(context.extensionUri, context, outputChannel);
+    const usageHistoryPanelProvider = new CopilotUsageHistoryPanel(context.extensionUri, context, logger);
     context.subscriptions.push(
         vscode.window.registerWebviewViewProvider(CopilotUsageHistoryPanel.viewType, usageHistoryPanelProvider)
     );
 
     // Register webview panel provider
-    const panelProvider = new ServerControlPanel(context.extensionUri, rememberManager);
+    const panelProvider = new ServerControlPanel(context.extensionUri, rememberManager, logger);
     context.subscriptions.push(
         vscode.window.registerWebviewViewProvider(ServerControlPanel.viewType, panelProvider)
     );
@@ -518,8 +525,11 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
 
+
+
     // Add all disposables
     context.subscriptions.push(
+        logChannel, // Dispose shared log channel
         rememberManager,
         startCommand,
         stopCommand,
@@ -541,34 +551,34 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Add debug command to inspect session content using only the unified layer
     const debugLogCommand = vscode.commands.registerCommand('remember-mcp.debugLogContent', async () => {
-        const outputChannel = rememberManager['outputChannel'] as vscode.OutputChannel;
+        const outputChannel = rememberManager['outputChannel'] as vscode.LogOutputChannel;
         
         try {
             // Use the shared service instance from the container
             const sessionService = ServiceContainer.getInstance().getUnifiedSessionDataService();
             
             const { sessionEvents, logEntries, stats } = await sessionService.initialize();
-            outputChannel.appendLine(`Found ${sessionEvents.length} session events and ${logEntries.length} log entries from ${stats.totalSessions} sessions.`);
+            outputChannel.info(`Found ${sessionEvents.length} session events and ${logEntries.length} log entries from ${stats.totalSessions} sessions.`);
             
             if (sessionEvents.length > 0) {
-                outputChannel.appendLine('Sample session events:');
+                outputChannel.info('Sample session events:');
                 sessionEvents.slice(0, 5).forEach((event: any, index: number) => {
-                    outputChannel.appendLine(`  ${index + 1}: ${event.type} at ${event.timestamp} (${event.model || 'unknown model'})`);
+                    outputChannel.info(`  ${index + 1}: ${event.type} at ${event.timestamp} (${event.model || 'unknown model'})`);
                 });
             } else {
-                outputChannel.appendLine('No session events found.');
+                outputChannel.info('No session events found.');
             }
             
             if (logEntries.length > 0) {
-                outputChannel.appendLine('Sample log entries:');
+                outputChannel.info('Sample log entries:');
                 logEntries.slice(0, 3).forEach((entry: any, index: number) => {
-                    outputChannel.appendLine(`  ${index + 1}: ${entry.status} at ${entry.timestamp} (${entry.modelName})`);
+                    outputChannel.info(`  ${index + 1}: ${entry.status} at ${entry.timestamp} (${entry.modelName})`);
                 });
             } else {
-                outputChannel.appendLine('No log entries found.');
+                outputChannel.info('No log entries found.');
             }
         } catch (error) {
-            outputChannel.appendLine(`Session debugging failed: ${error}`);
+            outputChannel.error(`Session debugging failed: ${error}`);
         }
         // Note: No need to dispose shared service instance
     });

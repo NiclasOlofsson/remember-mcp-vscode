@@ -145,6 +145,7 @@
   "scripts": {
     "vscode:prepublish": "npm run generate-marketplace-readme && npm run package",
     "generate-marketplace-readme": "node scripts/generate-marketplace-readme.js",
+    "clean": "rimraf out dist node_modules/.cache",
     "compile": "webpack",
     "watch": "webpack --watch",
     "package": "webpack --mode production --devtool hidden-source-map",
@@ -167,6 +168,7 @@
     "@vscode/test-cli": "^0.0.11",
     "@vscode/test-electron": "^2.5.2",
     "eslint": "^9.32.0",
+    "rimraf": "^6.0.1",
     "ts-loader": "^9.5.2",
     "typescript": "^5.9.2",
     "webpack": "^5.101.0",

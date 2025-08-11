@@ -1,191 +1,122 @@
 import * as vscode from 'vscode';
 import { RememberMcpManager } from '../../extension';
+import { CopilotUsageModel } from './copilot-usage-model';
+import { CopilotUsageView } from './copilot-usage-view';
 
-export class CopilotUsagePanel implements vscode.WebviewViewProvider {
+/**
+ * Main panel class that implements WebviewViewProvider
+ * Coordinates model and view directly without separate controller
+ */
+export class CopilotUsagePanel implements vscode.WebviewViewProvider, vscode.Disposable {
     public static readonly viewType = 'remember-mcp-usage-panel';
+    
+    private _model: CopilotUsageModel | null = null;
+    private _view: CopilotUsageView | null = null;
+    private _disposables: vscode.Disposable[] = [];
 
-    constructor(private readonly extensionUri: vscode.Uri, private rememberManager: RememberMcpManager) {}
+    constructor(
+        private readonly extensionUri: vscode.Uri, 
+        private readonly rememberManager: RememberMcpManager
+    ) {}
 
-    public resolveWebviewView(
+    /**
+     * Resolve the webview view and set up model and view
+     */
+    public async resolveWebviewView(
         webviewView: vscode.WebviewView,
         _context: vscode.WebviewViewResolveContext,
         _token: vscode.CancellationToken,
-    ) {
+    ): Promise<void> {
+        // Configure webview options
         webviewView.webview.options = {
             enableScripts: true,
             localResourceRoots: [this.extensionUri]
         };
 
-        webviewView.webview.html = this.getHtmlForWebview(webviewView.webview);
+        // Initialize model and view
+        this._model = new CopilotUsageModel(this.rememberManager);
+        this._view = new CopilotUsageView(webviewView.webview, this.extensionUri);
 
-        // Listen for usage stats changes to update the webview
-        this.rememberManager.usageStatsManager.onDidChangeStats(() => {
-            webviewView.webview.html = this.getHtmlForWebview(webviewView.webview);
+        // Set up data binding: model changes update the view
+        this._model.onDataChanged(async (stats) => {
+            await this._view!.render(stats);
         });
 
-        webviewView.webview.onDidReceiveMessage(async data => {
-            switch (data.type) {
-                case 'clearStats':
-                    this.rememberManager.clearModelUsageStats();
-                    vscode.window.showInformationMessage('Model usage statistics cleared.');
-                    break;
-                case 'refresh':
-                    webviewView.webview.html = this.getHtmlForWebview(webviewView.webview);
-                    break;
-            }
+        // Handle messages from the webview
+        const messageHandler = webviewView.webview.onDidReceiveMessage(async (message) => {
+            await this.handleMessage(message);
         });
+        this._disposables.push(messageHandler);
+
+        // Initial render
+        await this._view.render(this._model.usageStats);
     }
 
-    private getHtmlForWebview(webview: vscode.Webview) {
-        const usageStats = this.rememberManager.getModelUsageStats();
-        const totalRequests = Array.from(usageStats.values()).reduce((sum: number, count: number) => sum + count, 0);
-        const sortedStats = Array.from(usageStats.entries()).sort((a: [string, number], b: [string, number]) => b[1] - a[1]);
-
-        let tableRows = '';
-        if (sortedStats.length === 0) {
-            tableRows = '<tr><td colspan="2" class="no-data">No usage data available<br/>Start using Copilot to track usage</td></tr>';
-        } else {
-            tableRows = sortedStats.map(([model, count]) => 
-                `<tr><td>${model}</td><td class="count">${count}</td></tr>`
-            ).join('');
+    /**
+     * Handle messages from the webview
+     */
+    private async handleMessage(message: { type: string; [key: string]: any }): Promise<void> {
+        if (!this._model) {
+            return;
         }
 
-        return `<!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
-            <title>Copilot Usage</title>
-            <style>
-                body {
-                    font-family: var(--vscode-font-family);
-                    font-size: var(--vscode-font-size);
-                    color: var(--vscode-foreground);
-                    background-color: var(--vscode-sideBar-background);
-                    margin: 0;
-                    padding: 8px;
-                }
-                
-                h3 {
-                    margin: 0 0 8px 0;
-                    font-size: 13px;
-                    font-weight: 600;
-                    color: var(--vscode-sideBarTitle-foreground);
-                }
-                
-                .summary {
-                    margin-bottom: 8px;
-                    font-size: 12px;
-                    color: var(--vscode-descriptionForeground);
-                }
-                
-                table {
-                    width: 100%;
-                    border-collapse: collapse;
-                    margin-bottom: 8px;
-                    font-size: 12px;
-                }
-                
-                th {
-                    text-align: left;
-                    padding: 4px 8px 4px 0;
-                    font-weight: 600;
-                    color: var(--vscode-sideBarTitle-foreground);
-                    border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border);
-                }
-                
-                td {
-                    padding: 2px 8px 2px 0;
-                    color: var(--vscode-sideBar-foreground);
-                }
-                
-                td.count {
-                    text-align: right;
-                    font-variant-numeric: tabular-nums;
-                }
-                
-                tr:hover {
-                    background-color: var(--vscode-list-hoverBackground);
-                }
-                
-                .no-data {
-                    text-align: center;
-                    color: var(--vscode-descriptionForeground);
-                    font-style: italic;
-                    padding: 16px 0;
-                }
-                
-                button {
-                    width: 100%;
-                    padding: 4px 8px;
-                    margin: 2px 0;
-                    border: none;
-                    border-radius: 2px;
-                    font-size: 11px;
-                    cursor: pointer;
-                    font-family: var(--vscode-font-family);
-                }
-                
-                button:not(:disabled) {
-                    background-color: var(--vscode-button-background);
-                    color: var(--vscode-button-foreground);
-                }
-                
-                button:not(:disabled):hover {
-                    background-color: var(--vscode-button-hoverBackground);
-                }
-                
-                button:disabled {
-                    background-color: var(--vscode-button-secondaryBackground);
-                    color: var(--vscode-button-secondaryForeground);
-                    cursor: default;
-                }
-                
-                button.secondary:not(:disabled) {
-                    background-color: var(--vscode-button-secondaryBackground);
-                    color: var(--vscode-button-secondaryForeground);
-                }
-                
-                button.secondary:not(:disabled):hover {
-                    background-color: var(--vscode-button-secondaryHoverBackground);
-                }
-            </style>
-        </head>
-        <body>
-            <div class="summary">
-                Track and analyze Copilot model usage in real time as you work.
-            </div>
-            
-            <div class="summary">
-                Total: ${totalRequests} requests
-            </div>
-            
-            <table>
-                <thead>
-                    <tr>
-                        <th>Model</th>
-                        <th style="text-align: right;">Count</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    ${tableRows}
-                </tbody>
-            </table>
-            
-            <button class="secondary" onclick="sendMessage('clearStats')" ${sortedStats.length === 0 ? 'disabled' : ''}>Clear</button>
-            <button onclick="sendMessage('refresh')">Refresh</button>
-            
-            <script>
-                const vscode = acquireVsCodeApi();
-                
-                function sendMessage(type) {
-                    vscode.postMessage({
-                        type: type
-                    });
-                }
-            </script>
-        </body>
-        </html>`;
+        switch (message.type) {
+            case 'clearStats':
+                await this.handleClearStats();
+                break;
+            case 'refresh':
+                await this.handleRefresh();
+                break;
+            default:
+                console.warn(`Unknown message type: ${message.type}`);
+        }
+    }
+
+    /**
+     * Handle clear statistics request
+     */
+    private async handleClearStats(): Promise<void> {
+        if (!this._model) {
+            return;
+        }
+
+        try {
+            this._model.clearStats();
+            vscode.window.showInformationMessage('Model usage statistics cleared.');
+        } catch (error) {
+            console.error('Error clearing statistics:', error);
+            vscode.window.showErrorMessage('Failed to clear usage statistics.');
+        }
+    }
+
+    /**
+     * Handle refresh request
+     */
+    private async handleRefresh(): Promise<void> {
+        if (!this._model) {
+            return;
+        }
+
+        try {
+            this._model.refreshStats();
+        } catch (error) {
+            console.error('Error refreshing statistics:', error);
+            vscode.window.showErrorMessage('Failed to refresh usage statistics.');
+        }
+    }
+
+    /**
+     * Dispose of the panel and clean up resources
+     */
+    public dispose(): void {
+        this._disposables.forEach(d => d.dispose());
+        this._disposables = [];
+        
+        if (this._model) {
+            this._model.dispose();
+            this._model = null;
+        }
+        
+        this._view = null;
     }
 }
