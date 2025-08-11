@@ -7,27 +7,27 @@ import { WebviewUtils } from '../shared/webview-utils';
  * Handles HTML generation and UI rendering
  */
 export class CopilotUsageView {
-    constructor(
-        private readonly webview: vscode.Webview,
-        private readonly extensionUri: vscode.Uri
-    ) {}
+	constructor(
+		private readonly webview: vscode.Webview,
+		private readonly extensionUri: vscode.Uri
+	) {}
 
-    /**
+	/**
      * Generate and set the HTML content for the webview
      */
-    public async render(stats: UsageStats): Promise<void> {
-        const html = await this.generateHtml(stats);
-        this.webview.html = html;
-    }
+	public async render(stats: UsageStats): Promise<void> {
+		const html = await this.generateHtml(stats);
+		this.webview.html = html;
+	}
 
-    /**
+	/**
      * Generate HTML content based on usage statistics
      */
-    private async generateHtml(stats: UsageStats): Promise<string> {
-        const tableRows = this.generateTableRows(stats);
-        const sharedStyles = await WebviewUtils.getSharedStyles(this.extensionUri);
+	private async generateHtml(stats: UsageStats): Promise<string> {
+		const tableRows = this.generateTableRows(stats);
+		const sharedStyles = await WebviewUtils.getSharedStyles(this.extensionUri);
 
-        return `<!DOCTYPE html>
+		return `<!DOCTYPE html>
         <html lang="en">
         <head>
             <meta charset="UTF-8">
@@ -63,18 +63,18 @@ export class CopilotUsageView {
             ${WebviewUtils.getSharedScript()}
         </body>
         </html>`;
-    }
+	}
 
-    /**
+	/**
      * Generate table rows for usage statistics
      */
-    private generateTableRows(stats: UsageStats): string {
-        if (stats.sortedStats.length === 0) {
-            return '<tr><td colspan="2" class="no-data">No usage data available<br/>Start using Copilot to track usage</td></tr>';
-        }
+	private generateTableRows(stats: UsageStats): string {
+		if (stats.sortedStats.length === 0) {
+			return '<tr><td colspan="2" class="no-data">No usage data available<br/>Start using Copilot to track usage</td></tr>';
+		}
         
-        return stats.sortedStats.map(([model, count]) => 
-            `<tr><td>${WebviewUtils.escapeHtml(model)}</td><td class="count">${count}</td></tr>`
-        ).join('');
-    }
+		return stats.sortedStats.map(([model, count]) => 
+			`<tr><td>${WebviewUtils.escapeHtml(model)}</td><td class="count">${count}</td></tr>`
+		).join('');
+	}
 }

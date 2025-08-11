@@ -3,118 +3,119 @@ import { RememberMcpManager, PrerequisiteChecker } from '../../extension';
 import { ILogger } from '../../types/logger';
 
 export class ServerControlPanel implements vscode.WebviewViewProvider {
-    public static readonly viewType = 'remember-mcp-panel';
-    private prerequisites: { python: boolean; pipx: boolean; pythonVersion?: string; autoInstallAttempted?: boolean } | null = null;
-    private isInstalling = false;
+	public static readonly viewType = 'remember-mcp-panel';
+	private prerequisites: { python: boolean; pipx: boolean; pythonVersion?: string; autoInstallAttempted?: boolean } | null = null;
+	private isInstalling = false;
 
-    constructor(
-        private readonly extensionUri: vscode.Uri, 
-        private rememberManager: RememberMcpManager,
-        private readonly logger: ILogger
-    ) {}
+	constructor(
+		private readonly extensionUri: vscode.Uri, 
+		private rememberManager: RememberMcpManager,
+		private readonly logger: ILogger
+	) {}
 
-    public async resolveWebviewView(
-        webviewView: vscode.WebviewView,
-        _context: vscode.WebviewViewResolveContext,
-        _token: vscode.CancellationToken,
-    ) {
-        webviewView.webview.options = {
-            enableScripts: true,
-            localResourceRoots: [this.extensionUri]
-        };
+	public async resolveWebviewView(
+		webviewView: vscode.WebviewView,
+		_context: vscode.WebviewViewResolveContext,
+		_token: vscode.CancellationToken,
+	) {
+		webviewView.webview.options = {
+			enableScripts: true,
+			localResourceRoots: [this.extensionUri]
+		};
 
-        // Check prerequisites on startup
-        this.prerequisites = await PrerequisiteChecker.checkPrerequisites();
-        webviewView.webview.html = this.getHtmlForWebview(webviewView.webview);
+		// Check prerequisites on startup
+		this.prerequisites = await PrerequisiteChecker.checkPrerequisites();
+		webviewView.webview.html = this.getHtmlForWebview(webviewView.webview);
 
-        webviewView.webview.onDidReceiveMessage(async data => {
-            switch (data.type) {
-                case 'start':
-                    await this.rememberManager.startServer();
-                    break;
-                case 'stop':
-                    this.rememberManager.stopServer();
-                    break;
-                case 'restart':
-                    this.rememberManager.restartServer();
-                    break;
-                case 'recheckPrerequisites':
-                    PrerequisiteChecker.clearCache();
-                    this.prerequisites = await PrerequisiteChecker.checkPrerequisites();
-                    webviewView.webview.html = this.getHtmlForWebview(webviewView.webview);
-                    break;
-                case 'installPipx':
-                    await this.handleInstallPipx(webviewView);
-                    break;
-            }
-        });
-    }
+		webviewView.webview.onDidReceiveMessage(async data => {
+			switch (data.type) {
+				case 'start':
+					await this.rememberManager.startServer();
+					break;
+				case 'stop':
+					this.rememberManager.stopServer();
+					break;
+				case 'restart':
+					this.rememberManager.restartServer();
+					break;
+				case 'recheckPrerequisites':
+					PrerequisiteChecker.clearCache();
+					this.prerequisites = await PrerequisiteChecker.checkPrerequisites();
+					webviewView.webview.html = this.getHtmlForWebview(webviewView.webview);
+					break;
+				case 'installPipx':
+					await this.handleInstallPipx(webviewView);
+					break;
+			}
+		});
+	}
 
-    private async handleInstallPipx(webviewView: vscode.WebviewView): Promise<void> {
-        if (this.isInstalling) {
-            return;
-        }
+	private async handleInstallPipx(webviewView: vscode.WebviewView): Promise<void> {
+		if (this.isInstalling) {
+			return;
+		}
 
-        this.isInstalling = true;
+		this.isInstalling = true;
         
-        // Update UI to show installation in progress
-        webviewView.webview.html = this.getInstallingHtml();
+		// Update UI to show installation in progress
+		webviewView.webview.html = this.getInstallingHtml();
         
-        try {
-            this.logger.info('Starting automatic pipx installation...');
+		try {
+			this.logger.info('Starting automatic pipx installation...');
             
-            const success = await PrerequisiteChecker.installPipx(this.logger);
+			const success = await PrerequisiteChecker.installPipx(this.logger);
             
-            if (success) {
-                this.logger.info('pipx installation completed successfully!');
-                vscode.window.showInformationMessage('pipx installed successfully! Please restart VS Code to complete the setup.');
+			if (success) {
+				this.logger.info('pipx installation completed successfully!');
+				vscode.window.showInformationMessage('pipx installed successfully! Please restart VS Code to complete the setup.');
                 
-                // Mark that we attempted auto-install and clear cache
-                PrerequisiteChecker.clearCache();
-                this.prerequisites = await PrerequisiteChecker.checkPrerequisites();
-                if (this.prerequisites) {
-                    this.prerequisites.autoInstallAttempted = true;
-                }
-            } else {
-                this.logger.warn('pipx installation failed. Please install manually.');
-                vscode.window.showErrorMessage('pipx installation failed. Please install manually using the instructions below.');
-            }
-        } catch (error) {
-            this.logger.error(`pipx installation error: ${error}`);
-            vscode.window.showErrorMessage('pipx installation failed. Please install manually using the instructions below.');
-        } finally {
-            this.isInstalling = false;
-            webviewView.webview.html = this.getHtmlForWebview(webviewView.webview);
-        }
-    }
+				// Mark that we attempted auto-install and clear cache
+				PrerequisiteChecker.clearCache();
+				this.prerequisites = await PrerequisiteChecker.checkPrerequisites();
+				if (this.prerequisites) {
+					this.prerequisites.autoInstallAttempted = true;
+				}
+			} else {
+				this.logger.warn('pipx installation failed. Please install manually.');
+				vscode.window.showErrorMessage('pipx installation failed. Please install manually using the instructions below.');
+			}
+		} catch (error) {
+			this.logger.error(`pipx installation error: ${error}`);
+			vscode.window.showErrorMessage('pipx installation failed. Please install manually using the instructions below.');
+		} finally {
+			this.isInstalling = false;
+			webviewView.webview.html = this.getHtmlForWebview(webviewView.webview);
+		}
+	}
 
-    private getHtmlForWebview(webview: vscode.Webview) {
-        // Show prerequisite warning if Python or pipx are missing
-        if (!this.prerequisites?.python || !this.prerequisites?.pipx) {
-            return this.getPrerequisiteWarningHtml();
-        }
+	// eslint-disable-next-line @typescript-eslint/no-unused-vars
+	private getHtmlForWebview(webview: vscode.Webview) {
+		// Show prerequisite warning if Python or pipx are missing
+		if (!this.prerequisites?.python || !this.prerequisites?.pipx) {
+			return this.getPrerequisiteWarningHtml();
+		}
 
-        return this.getNormalControlHtml();
-    }
+		return this.getNormalControlHtml();
+	}
 
-    private getPrerequisiteWarningHtml() {
-        const missingPython = !this.prerequisites?.python;
-        const missingPipx = !this.prerequisites?.pipx;
-        const pythonVersion = this.prerequisites?.pythonVersion || '';
+	private getPrerequisiteWarningHtml() {
+		const missingPython = !this.prerequisites?.python;
+		const missingPipx = !this.prerequisites?.pipx;
+		const pythonVersion = this.prerequisites?.pythonVersion || '';
         
-        // Check if Python 3.10+ is available for auto-install
-        const canAutoInstallPipx = this.prerequisites?.python && !this.prerequisites?.pipx && !this.prerequisites?.autoInstallAttempted;
-        let pythonMajor = 0, pythonMinor = 0;
-        if (pythonVersion) {
-            const versionMatch = pythonVersion.match(/Python (\d+)\.(\d+)/);
-            if (versionMatch) {
-                pythonMajor = parseInt(versionMatch[1]);
-                pythonMinor = parseInt(versionMatch[2]);
-            }
-        }
-        const pythonVersionOk = pythonMajor > 3 || (pythonMajor === 3 && pythonMinor >= 10);
+		// Check if Python 3.10+ is available for auto-install
+		const canAutoInstallPipx = this.prerequisites?.python && !this.prerequisites?.pipx && !this.prerequisites?.autoInstallAttempted;
+		let pythonMajor = 0, pythonMinor = 0;
+		if (pythonVersion) {
+			const versionMatch = pythonVersion.match(/Python (\d+)\.(\d+)/);
+			if (versionMatch) {
+				pythonMajor = parseInt(versionMatch[1]);
+				pythonMinor = parseInt(versionMatch[2]);
+			}
+		}
+		const pythonVersionOk = pythonMajor > 3 || (pythonMajor === 3 && pythonMinor >= 10);
 
-        return `<!DOCTYPE html>
+		return `<!DOCTYPE html>
         <html lang="en">
         <head>
             <meta charset="UTF-8">
@@ -378,10 +379,10 @@ export class ServerControlPanel implements vscode.WebviewViewProvider {
             </script>
         </body>
         </html>`;
-    }
+	}
 
-    private getInstallingHtml() {
-        return `<!DOCTYPE html>
+	private getInstallingHtml() {
+		return `<!DOCTYPE html>
         <html lang="en">
         <head>
             <meta charset="UTF-8">
@@ -456,10 +457,10 @@ export class ServerControlPanel implements vscode.WebviewViewProvider {
             </div>
         </body>
         </html>`;
-    }
+	}
 
-    private getNormalControlHtml() {
-        return `<!DOCTYPE html>
+	private getNormalControlHtml() {
+		return `<!DOCTYPE html>
         <html lang="en">
         <head>
             <meta charset="UTF-8">
@@ -542,5 +543,5 @@ export class ServerControlPanel implements vscode.WebviewViewProvider {
             </script>
         </body>
         </html>`;
-    }
+	}
 }

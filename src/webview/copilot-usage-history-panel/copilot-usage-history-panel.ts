@@ -11,444 +11,444 @@ import { AnalyticsQuery, DashboardWidgetData } from '../../types/analytics';
 import { ILogger } from '../../types/logger';
 
 export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
-    public static readonly viewType = 'copilot-usage-history-panel';
+	public static readonly viewType = 'copilot-usage-history-panel';
 
-    private webviewView?: vscode.WebviewView;
-    private storageManager: UsageStorageManager;
-    private updateTimer?: NodeJS.Timeout;
-    private sessionEventsCallback?: (events: CopilotUsageEvent[]) => Promise<void>;
-    private logEntriesCallback?: (logEntries: any[]) => Promise<void>;
+	private webviewView?: vscode.WebviewView;
+	private storageManager: UsageStorageManager;
+	private updateTimer?: NodeJS.Timeout;
+	private sessionEventsCallback?: (events: CopilotUsageEvent[]) => Promise<void>;
+	private logEntriesCallback?: (logEntries: any[]) => Promise<void>;
 
-    constructor(
-        private readonly extensionUri: vscode.Uri,
-        private readonly context: vscode.ExtensionContext,
-        private readonly logger: ILogger
-    ) {
-        this.storageManager = new UsageStorageManager(context, logger);
+	constructor(
+		private readonly extensionUri: vscode.Uri,
+		private readonly context: vscode.ExtensionContext,
+		private readonly logger: ILogger
+	) {
+		this.storageManager = new UsageStorageManager(context, logger);
 
-        // Initialize storage asynchronously and register callbacks after initialization
-        this.initializeAsync();
-    }
+		// Initialize storage asynchronously and register callbacks after initialization
+		this.initializeAsync();
+	}
 
-    private async initializeAsync() {
-        try {
-            // Initialize storage first
-            await this.storageManager.initialize();
+	private async initializeAsync() {
+		try {
+			// Initialize storage first
+			await this.storageManager.initialize();
 
-            // Subscribe to real-time session events updates
-            this.sessionEventsCallback = async (events) => {
-                this.logger.info(`REAL-TIME SESSION UPDATE: Received ${events.length} session events`);
-                await this.updateWebviewContent();
-                this.logger.info(`REAL-TIME SESSION UPDATE: Webview updated`);
-            };
-            this.storageManager.onSessionEventsUpdated(this.sessionEventsCallback);
+			// Subscribe to real-time session events updates
+			this.sessionEventsCallback = async (events) => {
+				this.logger.info(`REAL-TIME SESSION UPDATE: Received ${events.length} session events`);
+				await this.updateWebviewContent();
+				this.logger.info('REAL-TIME SESSION UPDATE: Webview updated');
+			};
+			this.storageManager.onSessionEventsUpdated(this.sessionEventsCallback);
 
-            // Subscribe to real-time log entries updates (for immediate feedback)
-            this.logEntriesCallback = async (logEntries) => {
-                this.logger.info(`REAL-TIME LOG UPDATE: Received ${logEntries.length} log entries`);
-                // Log entries are real-time, don't need to update webview for every entry
-                // But we could show a live indicator or update counters
-            };
-            this.storageManager.onLogEntriesUpdated(this.logEntriesCallback);
-        } catch (error) {
-            this.logger.error(`Failed to initialize storage: ${error}`);
-        }
+			// Subscribe to real-time log entries updates (for immediate feedback)
+			this.logEntriesCallback = async (logEntries) => {
+				this.logger.info(`REAL-TIME LOG UPDATE: Received ${logEntries.length} log entries`);
+				// Log entries are real-time, don't need to update webview for every entry
+				// But we could show a live indicator or update counters
+			};
+			this.storageManager.onLogEntriesUpdated(this.logEntriesCallback);
+		} catch (error) {
+			this.logger.error(`Failed to initialize storage: ${error}`);
+		}
 
-        // Set up auto-refresh
-        // Set up auto-refresh
-        this.setupAutoRefresh();
-    }
+		// Set up auto-refresh
+		// Set up auto-refresh
+		this.setupAutoRefresh();
+	}
 
-    public resolveWebviewView(
-        webviewView: vscode.WebviewView,
-        _context: vscode.WebviewViewResolveContext,
-        _token: vscode.CancellationToken,
-    ) {
-        this.webviewView = webviewView;
+	public resolveWebviewView(
+		webviewView: vscode.WebviewView,
+		_context: vscode.WebviewViewResolveContext,
+		_token: vscode.CancellationToken,
+	) {
+		this.webviewView = webviewView;
 
-        webviewView.webview.options = {
-            enableScripts: true,
-            localResourceRoots: [this.extensionUri]
-        };
+		webviewView.webview.options = {
+			enableScripts: true,
+			localResourceRoots: [this.extensionUri]
+		};
 
-        // Load initial content
-        this.updateWebviewContent();
+		// Load initial content
+		this.updateWebviewContent();
 
-        // Handle messages from webview
-        webviewView.webview.onDidReceiveMessage(async data => await this.onDidReceiveMessage(data));
+		// Handle messages from webview
+		webviewView.webview.onDidReceiveMessage(async data => await this.onDidReceiveMessage(data));
 
-        // Clean up when webview is disposed
-        webviewView.onDidDispose(() => {
-            if (this.updateTimer) {
-                clearInterval(this.updateTimer);
-            }
-        });
-    }
+		// Clean up when webview is disposed
+		webviewView.onDidDispose(() => {
+			if (this.updateTimer) {
+				clearInterval(this.updateTimer);
+			}
+		});
+	}
 
-    private async onDidReceiveMessage(data: any) {
-        this.logger.trace(`Webview message received: ${JSON.stringify(data)}`);
+	private async onDidReceiveMessage(data: any) {
+		this.logger.trace(`Webview message received: ${JSON.stringify(data)}`);
 
-        // Also try showing a popup to confirm message reception
-        vscode.window.showInformationMessage(`Webview message received: ${data.type}`);
+		// Also try showing a popup to confirm message reception
+		vscode.window.showInformationMessage(`Webview message received: ${data.type}`);
 
-        switch (data.type) {
-            case 'refresh':
-                await this.refreshData();
-                break;
-            case 'scanHistoricalLogs':
-                await this.scanChatSessions();
-                break;
-            case 'scanChatSessions':
-                await this.scanChatSessions();
-                break;
-            case 'exportData':
-                await this.exportData(data.options);
-                break;
-            case 'updateTimeRange':
-                await this.updateTimeRange(data.timeRange);
-                break;
-            case 'clearData':
-                this.logger.trace('Processing clearData request');
-                await this.clearData();
-                break;
-            case 'updateSettings':
-                await this.updateSettings(data.settings);
-                break;
-            case 'testCcreqProvider':
-                await this.testCcreqProvider(data.ccreqUri);
-                break;
-            default:
-                this.logger.warn(`Unknown message type: ${data.type}`);
-        }
-    }
+		switch (data.type) {
+			case 'refresh':
+				await this.refreshData();
+				break;
+			case 'scanHistoricalLogs':
+				await this.scanChatSessions();
+				break;
+			case 'scanChatSessions':
+				await this.scanChatSessions();
+				break;
+			case 'exportData':
+				await this.exportData(data.options);
+				break;
+			case 'updateTimeRange':
+				await this.updateTimeRange(data.timeRange);
+				break;
+			case 'clearData':
+				this.logger.trace('Processing clearData request');
+				await this.clearData();
+				break;
+			case 'updateSettings':
+				await this.updateSettings(data.settings);
+				break;
+			case 'testCcreqProvider':
+				await this.testCcreqProvider(data.ccreqUri);
+				break;
+			default:
+				this.logger.warn(`Unknown message type: ${data.type}`);
+		}
+	}
 
-    /**
+	/**
      * Refresh data and update webview
      */
-    private async refreshData(): Promise<void> {
-        await this.updateWebviewContent();
-        this.logger.info('Copilot usage data refreshed');
-    }
+	private async refreshData(): Promise<void> {
+		await this.updateWebviewContent();
+		this.logger.info('Copilot usage data refreshed');
+	}
 
-    /**
+	/**
      * Scan chat sessions for usage events (primary method)
      */
-    private async scanChatSessions(): Promise<void> {
-        try {
-            this.logger.info('Starting chat session scan...');
+	private async scanChatSessions(): Promise<void> {
+		try {
+			this.logger.info('Starting chat session scan...');
 
-            // Show progress in webview
-            await this.postMessage({
-                type: 'scanProgress',
-                status: 'scanning',
-                message: 'Discovering chat session files...'
-            });
+			// Show progress in webview
+			await this.postMessage({
+				type: 'scanProgress',
+				status: 'scanning',
+				message: 'Discovering chat session files...'
+			});
 
-            const { events, stats } = await this.storageManager.scanChatSessions();
+			const { events, stats } = await this.storageManager.scanChatSessions();
 
-            await this.postMessage({
-                type: 'scanProgress',
-                status: 'processing',
-                message: `Processing ${events.length} events from ${stats.totalSessions} sessions...`
-            });
+			await this.postMessage({
+				type: 'scanProgress',
+				status: 'processing',
+				message: `Processing ${events.length} events from ${stats.totalSessions} sessions...`
+			});
 
-            if (events.length > 0) {
-                this.logger.info(`Session scan complete: ${events.length} events from ${stats.totalSessions} sessions processed in ${stats.scanDuration}ms`);
-                vscode.window.showInformationMessage(
-                    `Processed ${events.length} Copilot usage events from ${stats.totalSessions} chat sessions`
-                );
-            } else {
-                this.logger.info('No chat sessions found');
-                vscode.window.showInformationMessage('No Copilot chat sessions found');
-            }
+			if (events.length > 0) {
+				this.logger.info(`Session scan complete: ${events.length} events from ${stats.totalSessions} sessions processed in ${stats.scanDuration}ms`);
+				vscode.window.showInformationMessage(
+					`Processed ${events.length} Copilot usage events from ${stats.totalSessions} chat sessions`
+				);
+			} else {
+				this.logger.info('No chat sessions found');
+				vscode.window.showInformationMessage('No Copilot chat sessions found');
+			}
 
-            await this.postMessage({
-                type: 'scanProgress',
-                status: 'complete',
-                eventsFound: events.length,
-                sessionsFound: stats.totalSessions,
-                scanDuration: stats.scanDuration
-            });
+			await this.postMessage({
+				type: 'scanProgress',
+				status: 'complete',
+				eventsFound: events.length,
+				sessionsFound: stats.totalSessions,
+				scanDuration: stats.scanDuration
+			});
 
-            // Refresh the webview with new data
-            await this.updateWebviewContent();
+			// Refresh the webview with new data
+			await this.updateWebviewContent();
 
-        } catch (error) {
-            this.logger.error(`Chat session scan failed: ${error}`);
-            vscode.window.showErrorMessage(`Failed to scan chat sessions: ${error}`);
+		} catch (error) {
+			this.logger.error(`Chat session scan failed: ${error}`);
+			vscode.window.showErrorMessage(`Failed to scan chat sessions: ${error}`);
 
-            await this.postMessage({
-                type: 'scanProgress',
-                status: 'error',
-                error: String(error)
-            });
-        }
-    }
+			await this.postMessage({
+				type: 'scanProgress',
+				status: 'error',
+				error: String(error)
+			});
+		}
+	}
 
-    /**
+	/**
      * Export usage data
      */
-    private async exportData(options: any): Promise<void> {
-        try {
-            const settings = await this.storageManager.getSettings();
-            const dateRange = this.getDateRangeForTimespan(settings.defaultTimeRange);
-            const events = await this.storageManager.getEventsForDateRange(dateRange);
+	private async exportData(options: any): Promise<void> {
+		try {
+			const settings = await this.storageManager.getSettings();
+			const dateRange = this.getDateRangeForTimespan(settings.defaultTimeRange);
+			const events = await this.storageManager.getEventsForDateRange(dateRange);
 
-            // Create export data
-            const exportData = {
-                metadata: {
-                    exportedAt: new Date().toISOString(),
-                    totalEvents: events.length,
-                    dateRange: {
-                        start: dateRange.start.toISOString(),
-                        end: dateRange.end.toISOString()
-                    }
-                },
-                events: options.includeRawEvents ? events : [],
-                analytics: options.includeAnalytics ? this.calculateAnalytics(events, dateRange) : null
-            };
+			// Create export data
+			const exportData = {
+				metadata: {
+					exportedAt: new Date().toISOString(),
+					totalEvents: events.length,
+					dateRange: {
+						start: dateRange.start.toISOString(),
+						end: dateRange.end.toISOString()
+					}
+				},
+				events: options.includeRawEvents ? events : [],
+				analytics: options.includeAnalytics ? this.calculateAnalytics(events, dateRange) : null
+			};
 
-            // Save to file
-            const exportPath = await vscode.window.showSaveDialog({
-                defaultUri: vscode.Uri.file(`copilot-usage-export-${new Date().toISOString().split('T')[0]}.json`),
-                filters: {
-                    'JSON files': ['json'],
-                    'All files': ['*']
-                }
-            });
+			// Save to file
+			const exportPath = await vscode.window.showSaveDialog({
+				defaultUri: vscode.Uri.file(`copilot-usage-export-${new Date().toISOString().split('T')[0]}.json`),
+				filters: {
+					'JSON files': ['json'],
+					'All files': ['*']
+				}
+			});
 
-            if (exportPath) {
-                await vscode.workspace.fs.writeFile(exportPath, Buffer.from(JSON.stringify(exportData, null, 2), 'utf8'));
-                vscode.window.showInformationMessage(`Usage data exported to ${exportPath.fsPath}`);
-            }
+			if (exportPath) {
+				await vscode.workspace.fs.writeFile(exportPath, Buffer.from(JSON.stringify(exportData, null, 2), 'utf8'));
+				vscode.window.showInformationMessage(`Usage data exported to ${exportPath.fsPath}`);
+			}
 
-        } catch (error) {
-            vscode.window.showErrorMessage(`Failed to export data: ${error}`);
-        }
-    }
+		} catch (error) {
+			vscode.window.showErrorMessage(`Failed to export data: ${error}`);
+		}
+	}
 
-    /**
+	/**
      * Update time range setting
      */
-    private async updateTimeRange(timeRange: '7d' | '30d' | '90d'): Promise<void> {
-        await this.storageManager.updateSettings({ defaultTimeRange: timeRange });
-        await this.updateWebviewContent();
-    }
+	private async updateTimeRange(timeRange: '7d' | '30d' | '90d'): Promise<void> {
+		await this.storageManager.updateSettings({ defaultTimeRange: timeRange });
+		await this.updateWebviewContent();
+	}
 
-    /**
+	/**
      * Clear all usage data
      */
-    private async clearData(): Promise<void> {
-        this.logger.trace('Starting clearData method');
+	private async clearData(): Promise<void> {
+		this.logger.trace('Starting clearData method');
 
-        // Show confirmation dialog using VS Code's native modal
-        const confirmation = await vscode.window.showWarningMessage(
-            'Are you sure you want to clear all Copilot usage data? This action cannot be undone.',
-            { modal: true },
-            'Clear Data'
-        );
+		// Show confirmation dialog using VS Code's native modal
+		const confirmation = await vscode.window.showWarningMessage(
+			'Are you sure you want to clear all Copilot usage data? This action cannot be undone.',
+			{ modal: true },
+			'Clear Data'
+		);
 
-        this.logger.trace(`User confirmation result: ${confirmation}`);
+		this.logger.trace(`User confirmation result: ${confirmation}`);
 
-        if (confirmation === 'Clear Data') {
-            try {
-                this.logger.trace('Calling storageManager.clearStorage()');
-                const result = await this.storageManager.clearStorage();
-                this.logger.info(`Storage cleared successfully: ${JSON.stringify(result)}`);
+		if (confirmation === 'Clear Data') {
+			try {
+				this.logger.trace('Calling storageManager.clearStorage()');
+				const result = await this.storageManager.clearStorage();
+				this.logger.info(`Storage cleared successfully: ${JSON.stringify(result)}`);
 
-                // Show success notification
-                vscode.window.showInformationMessage(`✅ Usage data cleared: ${result.deletedFiles} files, ${result.deletedEvents} events`);
+				// Show success notification
+				vscode.window.showInformationMessage(`✅ Usage data cleared: ${result.deletedFiles} files, ${result.deletedEvents} events`);
 
-                await this.updateWebviewContent();
-            } catch (error) {
-                this.logger.error(`Error clearing storage: ${error}`);
-                vscode.window.showErrorMessage(`Failed to clear data: ${error}`);
-            }
-        } else {
-            this.logger.trace('User cancelled operation');
-        }
-    }
+				await this.updateWebviewContent();
+			} catch (error) {
+				this.logger.error(`Error clearing storage: ${error}`);
+				vscode.window.showErrorMessage(`Failed to clear data: ${error}`);
+			}
+		} else {
+			this.logger.trace('User cancelled operation');
+		}
+	}
 
-    /**
+	/**
      * Update settings
      */
-    private async updateSettings(settings: any): Promise<void> {
-        await this.storageManager.updateSettings(settings);
-        await this.updateWebviewContent();
-    }
+	private async updateSettings(settings: any): Promise<void> {
+		await this.storageManager.updateSettings(settings);
+		await this.updateWebviewContent();
+	}
 
-    /**
+	/**
      * Test ccreq file provider by attempting to open a ccreq URI
      */
-    private async testCcreqProvider(ccreqUri: string): Promise<void> {
-        try {
-            this.logger.trace(`Testing ccreq provider with URI: ${ccreqUri}`);
+	private async testCcreqProvider(ccreqUri: string): Promise<void> {
+		try {
+			this.logger.trace(`Testing ccreq provider with URI: ${ccreqUri}`);
 
-            // Parse and validate the URI
-            const uri = vscode.Uri.parse(ccreqUri);
-            this.logger.trace(`Parsed URI - scheme: ${uri.scheme}, path: ${uri.path}`);
+			// Parse and validate the URI
+			const uri = vscode.Uri.parse(ccreqUri);
+			this.logger.trace(`Parsed URI - scheme: ${uri.scheme}, path: ${uri.path}`);
 
-            if (uri.scheme !== 'ccreq') {
-                throw new Error(`Invalid scheme: expected 'ccreq', got '${uri.scheme}'`);
-            }
+			if (uri.scheme !== 'ccreq') {
+				throw new Error(`Invalid scheme: expected 'ccreq', got '${uri.scheme}'`);
+			}
 
-            // Attempt to read the document content
-            const startTime = Date.now();
-            const document = await vscode.workspace.openTextDocument(uri);
-            const loadTime = Date.now() - startTime;
+			// Attempt to read the document content
+			const startTime = Date.now();
+			const document = await vscode.workspace.openTextDocument(uri);
+			const loadTime = Date.now() - startTime;
 
-            const content = document.getText();
-            const contentLength = content.length;
-            const lineCount = document.lineCount;
+			const content = document.getText();
+			const contentLength = content.length;
+			const lineCount = document.lineCount;
 
-            this.logger.info(`SUCCESS - Document loaded in ${loadTime}ms`);
-            this.logger.trace(`Content length: ${contentLength} characters`);
-            this.logger.trace(`Line count: ${lineCount}`);
-            this.logger.trace(`First 200 chars: ${content.substring(0, 200)}...`);
+			this.logger.info(`SUCCESS - Document loaded in ${loadTime}ms`);
+			this.logger.trace(`Content length: ${contentLength} characters`);
+			this.logger.trace(`Line count: ${lineCount}`);
+			this.logger.trace(`First 200 chars: ${content.substring(0, 200)}...`);
 
-            // Open the document in markdown preview mode
-            await vscode.commands.executeCommand('markdown.showPreviewToSide', document.uri);
+			// Open the document in markdown preview mode
+			await vscode.commands.executeCommand('markdown.showPreviewToSide', document.uri);
 
-            this.logger.info(`Document opened in markdown preview`);
+			this.logger.info('Document opened in markdown preview');
 
-            // Send results to webview
-            await this.postMessage({
-                type: 'ccreqTestResult',
-                success: true,
-                uri: ccreqUri,
-                loadTime,
-                contentLength,
-                lineCount,
-                preview: content.substring(0, 500),
-                openedInEditor: true
-            });
+			// Send results to webview
+			await this.postMessage({
+				type: 'ccreqTestResult',
+				success: true,
+				uri: ccreqUri,
+				loadTime,
+				contentLength,
+				lineCount,
+				preview: content.substring(0, 500),
+				openedInEditor: true
+			});
 
-            // Also show in VS Code
-            vscode.window.showInformationMessage(`✅ ccreq provider test successful! Loaded ${contentLength} chars in ${loadTime}ms and opened in editor`);
+			// Also show in VS Code
+			vscode.window.showInformationMessage(`✅ ccreq provider test successful! Loaded ${contentLength} chars in ${loadTime}ms and opened in editor`);
 
-        } catch (error) {
-            this.logger.error(`ERROR: ${error}`);
+		} catch (error) {
+			this.logger.error(`ERROR: ${error}`);
 
-            // Send error to webview
-            await this.postMessage({
-                type: 'ccreqTestResult',
-                success: false,
-                uri: ccreqUri,
-                error: String(error)
-            });
+			// Send error to webview
+			await this.postMessage({
+				type: 'ccreqTestResult',
+				success: false,
+				uri: ccreqUri,
+				error: String(error)
+			});
 
-            // Also show in VS Code
-            vscode.window.showErrorMessage(`❌ ccreq provider test failed: ${error}`);
-        }
-    }
+			// Also show in VS Code
+			vscode.window.showErrorMessage(`❌ ccreq provider test failed: ${error}`);
+		}
+	}
 
-    /**
+	/**
      * Clear all storage data (public method for command interface)
      */
-    public async clearStorage(): Promise<void> {
-        const result = await this.storageManager.clearStorage();
-        this.logger.info(`Storage cleared: ${result.deletedFiles} files, ${result.deletedEvents} events`);
-        await this.updateWebviewContent();
-    }
+	public async clearStorage(): Promise<void> {
+		const result = await this.storageManager.clearStorage();
+		this.logger.info(`Storage cleared: ${result.deletedFiles} files, ${result.deletedEvents} events`);
+		await this.updateWebviewContent();
+	}
 
-    /**
+	/**
      * Update webview content with current data
      */
-    private async updateWebviewContent(): Promise<void> {
-        if (!this.webviewView) {
-            return;
-        }
+	private async updateWebviewContent(): Promise<void> {
+		if (!this.webviewView) {
+			return;
+		}
 
-        try {
-            const settings = await this.storageManager.getSettings();
-            const dateRange = this.getDateRangeForTimespan(settings.defaultTimeRange);
-            const events = await this.storageManager.getEventsForDateRange(dateRange);
+		try {
+			const settings = await this.storageManager.getSettings();
+			const dateRange = this.getDateRangeForTimespan(settings.defaultTimeRange);
+			const events = await this.storageManager.getEventsForDateRange(dateRange);
 
-            this.logger.trace(`Found ${events.length} events for date range ${dateRange.start.toISOString()} to ${dateRange.end.toISOString()}`);
+			this.logger.trace(`Found ${events.length} events for date range ${dateRange.start.toISOString()} to ${dateRange.end.toISOString()}`);
 
-            const dashboardData = AnalyticsEngine.calculateQuickStats(events);
-            const analytics = this.calculateAnalytics(events, dateRange);
-            const storageStats = await this.storageManager.getStorageStats();
+			const dashboardData = AnalyticsEngine.calculateQuickStats(events);
+			const analytics = this.calculateAnalytics(events, dateRange);
+			const storageStats = await this.storageManager.getStorageStats();
 
-            this.logger.trace(`Dashboard data: ${JSON.stringify(dashboardData)}`);
-            this.logger.trace(`Analytics data keys: ${Object.keys(analytics)}`);
+			this.logger.trace(`Dashboard data: ${JSON.stringify(dashboardData)}`);
+			this.logger.trace(`Analytics data keys: ${Object.keys(analytics)}`);
 
-            this.webviewView.webview.html = this.getWebviewContent(dashboardData, analytics, storageStats, settings);
+			this.webviewView.webview.html = this.getWebviewContent(dashboardData, analytics, storageStats, settings);
 
-        } catch (error) {
-            this.logger.error(`Failed to update webview content: ${error}`);
-            this.webviewView.webview.html = this.getErrorWebviewContent(String(error));
-        }
-    }
+		} catch (error) {
+			this.logger.error(`Failed to update webview content: ${error}`);
+			this.webviewView.webview.html = this.getErrorWebviewContent(String(error));
+		}
+	}
 
-    /**
+	/**
      * Calculate analytics for given events and date range
      */
-    private calculateAnalytics(events: CopilotUsageEvent[], dateRange: DateRange): any {
-        const query: AnalyticsQuery = { dateRange };
-        return AnalyticsEngine.calculateAnalytics(events, query);
-    }
+	private calculateAnalytics(events: CopilotUsageEvent[], dateRange: DateRange): any {
+		const query: AnalyticsQuery = { dateRange };
+		return AnalyticsEngine.calculateAnalytics(events, query);
+	}
 
-    /**
+	/**
      * Get date range for a given timespan
      */
-    private getDateRangeForTimespan(timespan: '7d' | '30d' | '90d'): DateRange {
-        const end = new Date();
-        const start = new Date();
+	private getDateRangeForTimespan(timespan: '7d' | '30d' | '90d'): DateRange {
+		const end = new Date();
+		const start = new Date();
 
-        switch (timespan) {
-            case '7d':
-                start.setDate(start.getDate() - 7);
-                break;
-            case '30d':
-                start.setDate(start.getDate() - 30);
-                break;
-            case '90d':
-                start.setDate(start.getDate() - 90);
-                break;
-        }
+		switch (timespan) {
+			case '7d':
+				start.setDate(start.getDate() - 7);
+				break;
+			case '30d':
+				start.setDate(start.getDate() - 30);
+				break;
+			case '90d':
+				start.setDate(start.getDate() - 90);
+				break;
+		}
 
-        return { start, end };
-    }
+		return { start, end };
+	}
 
-    /**
+	/**
      * Set up automatic refresh of data
      */
-    private setupAutoRefresh(): void {
-        this.updateTimer = setInterval(async () => {
-            if (this.webviewView && this.webviewView.visible) {
-                await this.updateWebviewContent();
-            }
-        }, 30000); // Refresh every 30 seconds when visible
-    }
+	private setupAutoRefresh(): void {
+		this.updateTimer = setInterval(async () => {
+			if (this.webviewView && this.webviewView.visible) {
+				await this.updateWebviewContent();
+			}
+		}, 30000); // Refresh every 30 seconds when visible
+	}
 
-    /**
+	/**
      * Post message to webview
      */
-    private async postMessage(message: any): Promise<void> {
-        if (this.webviewView) {
-            await this.webviewView.webview.postMessage(message);
-        }
-    }
+	private async postMessage(message: any): Promise<void> {
+		if (this.webviewView) {
+			await this.webviewView.webview.postMessage(message);
+		}
+	}
 
-    /**
+	/**
      * Generate the HTML content for the webview
      */
-    private getWebviewContent(
-        dashboardData: DashboardWidgetData,
-        analytics: any,
-        storageStats: any,
-        settings: any
-    ): string {
-        if (!this.webviewView) {
-            return 'Webview not available';
-        }
+	private getWebviewContent(
+		dashboardData: DashboardWidgetData,
+		analytics: any,
+		storageStats: any,
+		settings: any
+	): string {
+		if (!this.webviewView) {
+			return 'Webview not available';
+		}
 
-        const chartJsUri = this.webviewView.webview.asWebviewUri(
-            vscode.Uri.joinPath(this.extensionUri, 'node_modules', 'chart.js', 'dist', 'chart.umd.min.js')
-        );
+		const chartJsUri = this.webviewView.webview.asWebviewUri(
+			vscode.Uri.joinPath(this.extensionUri, 'node_modules', 'chart.js', 'dist', 'chart.umd.min.js')
+		);
 
-        return `<!DOCTYPE html>
+		return `<!DOCTYPE html>
         <html lang="en">
         <head>
             <meta charset="UTF-8">
@@ -524,11 +524,11 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
                             <h4>Top Languages</h4>
                             <div class="list">
                                 ${analytics.languageMetrics.slice(0, 5).map((lang: any) =>
-            `<div class="list-item">
+									`<div class="list-item">
                                         <span>${lang.language}</span>
                                         <span>${lang.eventCount}</span>
                                     </div>`
-        ).join('')}
+								).join('')}
                             </div>
                         </div>
                         
@@ -536,11 +536,11 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
                             <h4>Top Models</h4>
                             <div class="list">
                                 ${analytics.modelMetrics.slice(0, 5).map((model: any) =>
-            `<div class="list-item">
+									`<div class="list-item">
                                         <span>${model.model}</span>
                                         <span>${model.eventCount}</span>
                                     </div>`
-        ).join('')}
+								).join('')}
                             </div>
                         </div>
                     </div>
@@ -588,13 +588,13 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
             </script>
         </body>
         </html>`;
-    }
+	}
 
-    /**
+	/**
      * Generate CSS styles for the webview
      */
-    private getWebviewStyles(): string {
-        return `
+	private getWebviewStyles(): string {
+		return `
             body {
                 font-family: var(--vscode-font-family);
                 font-size: var(--vscode-font-size);
@@ -895,20 +895,20 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
                 100% { transform: rotate(360deg); }
             }
         `;
-    }
+	}
 
-    /**
+	/**
      * Generate JavaScript for the webview
      */
-    private getWebviewScript(analytics: any): string {
-        // Pre-serialize analytics data safely to avoid injection issues
-        const safeAnalyticsData = {
-            timeSeriesData: analytics.timeSeriesData || [],
-            eventTypeDistribution: analytics.eventTypeDistribution || [],
-            languageMetrics: analytics.languageMetrics || []
-        };
+	private getWebviewScript(analytics: any): string {
+		// Pre-serialize analytics data safely to avoid injection issues
+		const safeAnalyticsData = {
+			timeSeriesData: analytics.timeSeriesData || [],
+			eventTypeDistribution: analytics.eventTypeDistribution || [],
+			languageMetrics: analytics.languageMetrics || []
+		};
 
-        return `
+		return `
             const vscode = acquireVsCodeApi();
             
             // Safely inject analytics data
@@ -1419,13 +1419,13 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
                 setTimeout(initializeCharts, 50);
             }
         `;
-    }
+	}
 
-    /**
+	/**
      * Generate error content for the webview
      */
-    private getErrorWebviewContent(error: string): string {
-        return `<!DOCTYPE html>
+	private getErrorWebviewContent(error: string): string {
+		return `<!DOCTYPE html>
         <html lang="en">
         <head>
             <meta charset="UTF-8">
@@ -1454,22 +1454,22 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
             <button id="retryBtn">Retry</button>
         </body>
         </html>`;
-    }
+	}
 
-    dispose(): void {
-        if (this.updateTimer) {
-            clearInterval(this.updateTimer);
-        }
+	dispose(): void {
+		if (this.updateTimer) {
+			clearInterval(this.updateTimer);
+		}
 
-        // Remove event callbacks to prevent memory leaks
-        if (this.sessionEventsCallback) {
-            this.storageManager.removeSessionEventCallback(this.sessionEventsCallback);
-        }
-        if (this.logEntriesCallback) {
-            this.storageManager.removeLogEventCallback(this.logEntriesCallback);
-        }
+		// Remove event callbacks to prevent memory leaks
+		if (this.sessionEventsCallback) {
+			this.storageManager.removeSessionEventCallback(this.sessionEventsCallback);
+		}
+		if (this.logEntriesCallback) {
+			this.storageManager.removeLogEventCallback(this.logEntriesCallback);
+		}
 
-        // Dispose storage manager resources
-        this.storageManager.dispose();
-    }
+		// Dispose storage manager resources
+		this.storageManager.dispose();
+	}
 }

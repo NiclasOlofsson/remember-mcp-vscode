@@ -10,7 +10,9 @@
     "url": "https://github.com/NiclasOlofsson/remember-mcp-vscode"
   },
   "engines": {
-    "vscode": "^1.102.0"
+    "vscode": "^1.102.0",
+    "node": ">=22.14.0",
+    "npm": ">=9.0.0"
   },
   "categories": [
     "Other"
@@ -146,33 +148,49 @@
     "vscode:prepublish": "npm run generate-marketplace-readme && npm run package",
     "generate-marketplace-readme": "node scripts/generate-marketplace-readme.js",
     "clean": "rimraf out dist node_modules/.cache",
-    "compile": "webpack",
-    "watch": "webpack --watch",
-    "package": "webpack --mode production --devtool hidden-source-map",
+    "build": "tsx .esbuild.ts",
+    "compile": "tsx .esbuild.ts --dev",
+    "watch": "npm-run-all -p watch:*",
+    "watch:esbuild": "tsx .esbuild.ts --watch --dev",
+    "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
+    "package": "tsx .esbuild.ts",
     "compile-tests": "tsc -p . --outDir out",
     "watch-tests": "tsc -p . -w --outDir out",
     "pretest": "npm run compile-tests && npm run compile && npm run lint",
     "lint": "eslint src",
+    "lint-staged": "eslint --max-warnings=0",
     "test": "vscode-test",
+    "test:unit": "vitest --run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit --project tsconfig.json",
     "bump-version": "npm version patch",
     "package:marketplace": "npm run bump-version && npm run generate-marketplace-readme && vsce package --readme-path README_marketplace.md",
     "publish:marketplace": "npm run package:marketplace && vsce publish --readme-path README_marketplace.md"
   },
   "devDependencies": {
+    "@stylistic/eslint-plugin": "^3.1.0",
     "@types/mocha": "^10.0.10",
     "@types/node": "22.x",
     "@types/uuid": "^10.0.0",
     "@types/vscode": "^1.102.0",
     "@typescript-eslint/eslint-plugin": "^8.39.0",
     "@typescript-eslint/parser": "^8.39.0",
+    "@vitest/coverage-v8": "^3.2.4",
     "@vscode/test-cli": "^0.0.11",
     "@vscode/test-electron": "^2.5.2",
+    "esbuild": "^0.25.8",
     "eslint": "^9.32.0",
+    "eslint-import-resolver-typescript": "^4.4.4",
+    "eslint-plugin-header": "^3.1.1",
+    "eslint-plugin-import": "^2.32.0",
+    "eslint-plugin-jsdoc": "^51.4.1",
+    "husky": "^9.1.7",
+    "lint-staged": "^15.5.2",
+    "npm-run-all": "^4.1.5",
     "rimraf": "^6.0.1",
-    "ts-loader": "^9.5.2",
+    "tsx": "^4.20.3",
     "typescript": "^5.9.2",
-    "webpack": "^5.101.0",
-    "webpack-cli": "^6.0.1"
+    "vitest": "^3.2.4"
   },
   "dependencies": {
     "async-mutex": "^0.5.0",
