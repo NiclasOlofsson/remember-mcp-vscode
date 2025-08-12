@@ -253,10 +253,46 @@ export class SessionDataTransformer {
 	/**
      * Determine event type based on request characteristics
      */
-	// eslint-disable-next-line @typescript-eslint/no-unused-vars
 	private determineEventType(request: CopilotChatRequest): 'chat' | 'completion' | 'edit' | 'explain' {
-		// Default to 'chat' since these are chat session files
-		// Could be enhanced to detect specific patterns in the future
+		// Check agent type first
+		if (request.agent?.id) {
+			if (request.agent.id.includes('editsAgent')) {
+				return 'edit';
+			}
+			if (request.agent.id.includes('explainAgent')) {
+				return 'explain';
+			}
+		}
+
+		// Check message content for slash commands or patterns
+		const messageText = request.message?.text?.toLowerCase() || '';
+		
+		// Look for edit-related patterns
+		if (messageText.includes('/edit') || 
+			messageText.includes('modify') || 
+			messageText.includes('change') ||
+			messageText.includes('update') ||
+			messageText.includes('fix')) {
+			return 'edit';
+		}
+		
+		// Look for explain-related patterns
+		if (messageText.includes('/explain') || 
+			messageText.includes('explain') ||
+			messageText.includes('what does') ||
+			messageText.includes('how does') ||
+			messageText.includes('describe')) {
+			return 'explain';
+		}
+		
+		// Look for completion-related patterns (inline completions, suggestions)
+		if (messageText.includes('complete') ||
+			messageText.includes('suggest') ||
+			messageText.includes('autocomplete')) {
+			return 'completion';
+		}
+		
+		// Default to 'chat' for general conversation
 		return 'chat';
 	}
 

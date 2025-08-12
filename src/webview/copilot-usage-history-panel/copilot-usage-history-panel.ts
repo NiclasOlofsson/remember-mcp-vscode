@@ -92,15 +92,6 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
 		vscode.window.showInformationMessage(`Webview message received: ${data.type}`);
 
 		switch (data.type) {
-			case 'refresh':
-				await this.refreshData();
-				break;
-			case 'scanHistoricalLogs':
-				await this.scanChatSessions();
-				break;
-			case 'scanChatSessions':
-				await this.scanChatSessions();
-				break;
 			case 'exportData':
 				await this.exportData(data.options);
 				break;
@@ -114,9 +105,6 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
 			case 'updateSettings':
 				await this.updateSettings(data.settings);
 				break;
-			case 'testCcreqProvider':
-				await this.testCcreqProvider(data.ccreqUri);
-				break;
 			default:
 				this.logger.warn(`Unknown message type: ${data.type}`);
 		}
@@ -125,7 +113,7 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
 	/**
      * Refresh data and update webview
      */
-	private async refreshData(): Promise<void> {
+	public async refreshData(): Promise<void> {
 		await this.updateWebviewContent();
 		this.logger.info('Copilot usage data refreshed');
 	}
@@ -133,7 +121,7 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
 	/**
      * Scan chat sessions for usage events (primary method)
      */
-	private async scanChatSessions(): Promise<void> {
+	public async scanChatSessions(): Promise<void> {
 		try {
 			this.logger.info('Starting chat session scan...');
 
@@ -188,7 +176,7 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
 	/**
      * Export usage data
      */
-	private async exportData(options: any): Promise<void> {
+	public async exportData(options: any): Promise<void> {
 		try {
 			const settings = await this.storageManager.getSettings();
 			const dateRange = this.getDateRangeForTimespan(settings.defaultTimeRange);
@@ -352,6 +340,13 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
 	}
 
 	/**
+     * Get storage statistics (public method for command interface)
+     */
+	public async getStorageStats(): Promise<any> {
+		return await this.storageManager.getStorageStats();
+	}
+
+	/**
      * Update webview content with current data
      */
 	private async updateWebviewContent(): Promise<void> {
@@ -372,6 +367,9 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
 
 			this.logger.trace(`Dashboard data: ${JSON.stringify(dashboardData)}`);
 			this.logger.trace(`Analytics data keys: ${Object.keys(analytics)}`);
+
+			// Update context for toolbar button visibility
+			await vscode.commands.executeCommand('setContext', 'remember-mcp.hasUsageData', dashboardData.totalEvents > 0);
 
 			this.webviewView.webview.html = this.getWebviewContent(dashboardData, analytics, storageStats, settings);
 
@@ -470,11 +468,6 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
                             <option value="30d" ${settings.defaultTimeRange === '30d' ? 'selected' : ''}>Last 30 Days</option>
                             <option value="90d" ${settings.defaultTimeRange === '90d' ? 'selected' : ''}>Last 90 Days</option>
                         </select>
-                        <button id="refreshBtn">Refresh</button>
-                        <button id="scanSessionsBtn">Scan Sessions</button>
-                        <button id="scanHistoryBtn">Scan Sessions</button>
-                        <button id="exportBtn">Export</button>
-                        <button id="clearStorageBtn" class="warning-button" title="Clear all stored usage data">Clear Storage</button>
                     </div>
                 </header>
                 
@@ -1201,21 +1194,23 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider {
                         return;
                     }
                     
-                    // Prepare Chart.js data
+                    // Prepare Chart.js data with compact date formatting
                     const chartData = {
-                        labels: data.map(d => d.timestamp),
+                        labels: data.map(d => {
+                            const date = new Date(d.timestamp);
+                            return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                        }),
                         datasets: [{
                             label: 'Daily Events',
                             data: data.map(d => d.value),
+                            backgroundColor: getComputedStyle(document.body).getPropertyValue('--vscode-button-background'),
                             borderColor: getComputedStyle(document.body).getPropertyValue('--vscode-button-background'),
-                            backgroundColor: getComputedStyle(document.body).getPropertyValue('--vscode-button-background') + '20',
-                            tension: 0.1,
-                            fill: true
+                            borderWidth: 1
                         }]
                     };
                     
                     timeSeriesChart = new Chart(ctx, {
-                        type: 'line',
+                        type: 'bar',
                         data: chartData,
                         options: {
                             responsive: true,

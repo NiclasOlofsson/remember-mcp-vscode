@@ -498,10 +498,51 @@ export function activate(context: vscode.ExtensionContext) {
 
 			if (result === 'Yes, Clear All') {
 				await usageHistoryPanelProvider.clearStorage();
+				await vscode.commands.executeCommand('setContext', 'remember-mcp.hasUsageData', false);
 				vscode.window.showInformationMessage('Copilot usage history cleared successfully.');
 			}
 		} catch (error) {
 			vscode.window.showErrorMessage(`Failed to clear usage history: ${error}`);
+		}
+	});
+
+	const scanChatSessionsCommand = vscode.commands.registerCommand('remember-mcp.scanChatSessions', async () => {
+		try {
+			// Check if we already have data
+			const storageStats = await usageHistoryPanelProvider.getStorageStats();
+			if (storageStats.totalEvents > 0) {
+				const result = await vscode.window.showWarningMessage(
+					`You already have ${storageStats.totalEvents} usage events. Scanning will add any new events found.`,
+					'Continue Scanning',
+					'Cancel'
+				);
+				if (result !== 'Continue Scanning') {
+					return;
+				}
+			}
+
+			await usageHistoryPanelProvider.scanChatSessions();
+			await vscode.commands.executeCommand('setContext', 'remember-mcp.hasUsageData', true);
+		} catch (error) {
+			vscode.window.showErrorMessage(`Failed to scan chat sessions: ${error}`);
+		}
+	});
+
+	const exportUsageDataCommand = vscode.commands.registerCommand('remember-mcp.exportUsageData', async () => {
+		try {
+			// Check if we have data to export
+			const storageStats = await usageHistoryPanelProvider.getStorageStats();
+			if (storageStats.totalEvents === 0) {
+				vscode.window.showInformationMessage('No usage data to export. Use the Scan button to collect data first.');
+				return;
+			}
+
+			await usageHistoryPanelProvider.exportData({
+				includeRawEvents: true,
+				includeAnalytics: true
+			});
+		} catch (error) {
+			vscode.window.showErrorMessage(`Failed to export usage data: ${error}`);
 		}
 	});
 
@@ -518,7 +559,9 @@ export function activate(context: vscode.ExtensionContext) {
 		showOutputCommand,
 		clearUsageStatsCommand,
 		showUsageHistoryCommand,
-		clearUsageHistoryCommand
+		clearUsageHistoryCommand,
+		scanChatSessionsCommand,
+		exportUsageDataCommand
 	);
 
 	// Auto-start MCP server if configured
