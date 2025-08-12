@@ -72,12 +72,19 @@ export interface CopilotChatRequest {
 	// Context and references
 	contentReferences?: Array<{
 		reference: {
-			uri: string;
+			uri?: string;  // May not always be present
+			fsPath?: string;  // Windows file system path
+			path?: string;  // Unix-style path
+			external?: string;  // External URI reference
+			scheme?: string;  // URI scheme (e.g., "file", "vscode-userdata")
+			$mid?: number;  // VS Code internal identifier
+			_sep?: number;  // VS Code internal separator
 			range?: {
 				start: { line: number; character: number };
 				end: { line: number; character: number };
 			};
 		};
+		kind?: string;  // Reference kind (e.g., "reference")
 		[key: string]: any;
 	}>;
     

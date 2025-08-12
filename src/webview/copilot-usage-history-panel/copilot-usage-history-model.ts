@@ -1,5 +1,4 @@
-import { UsageStorageManager } from '../../storage/usage-storage-manager';
-import { AnalyticsEngine } from '../../storage/analytics-engine';
+import { EnhancedAnalyticsEngine } from '../../storage/enhanced-analytics-engine';
 import { CopilotUsageEvent, DateRange } from '../../types/usage-events';
 import { AnalyticsQuery } from '../../types/analytics';
 import { ILogger } from '../../types/logger';
@@ -35,7 +34,7 @@ export class CopilotUsageHistoryModel {
 	public globalState!: GlobalStateViewModel;
 
 	constructor(
-		private readonly storageManager: UsageStorageManager,
+		private readonly analyticsEngine: EnhancedAnalyticsEngine,
 		private readonly logger: ILogger
 	) {
 		// Initialize micro-view-models with default states
@@ -197,8 +196,8 @@ export class CopilotUsageHistoryModel {
 		};
 
 		// Register callbacks
-		this.storageManager.onSessionEventsUpdated(this._sessionEventsCallback);
-		this.storageManager.onLogEntriesUpdated(this._logEntriesCallback);
+		this.analyticsEngine.onSessionEventsUpdated(this._sessionEventsCallback);
+		this.analyticsEngine.onLogEntriesUpdated(this._logEntriesCallback);
 	}
 
 	/**
@@ -230,10 +229,10 @@ export class CopilotUsageHistoryModel {
 			this.globalState.isLoading = true;
 
 			// Get current settings and data
-			const settings = await this.storageManager.getSettings();
+			const settings = await this.analyticsEngine.getSettings();
 			const dateRange = this.getDateRangeForTimespan(settings.defaultTimeRange);
-			const events = await this.storageManager.getEventsForDateRange(dateRange);
-			const storageStats = await this.storageManager.getStorageStats();
+			const events = await this.analyticsEngine.getEventsForDateRange(dateRange);
+			const storageStats = await this.analyticsEngine.getStorageStats();
 
 			// Update filter controls first
 			this.updateFilterControls(settings, dateRange);
@@ -271,8 +270,8 @@ export class CopilotUsageHistoryModel {
 		// Calculate analytics
 		const dateRange = this.getDateRangeForTimespan(this.filterControls.timeRange.current);
 		const query: AnalyticsQuery = { dateRange };
-		const analytics = AnalyticsEngine.calculateAnalytics(events, query);
-		const quickStats = AnalyticsEngine.calculateQuickStats(events);
+		const analytics = await this.analyticsEngine.calculateAnalytics(events, query);
+		const quickStats = await this.analyticsEngine.calculateQuickStats(events);
 		
 		console.log('Model.processSessionEvents: Analytics:', analytics);
 		console.log('Model.processSessionEvents: Quick stats:', quickStats);
@@ -636,7 +635,7 @@ export class CopilotUsageHistoryModel {
 	 * Update time range setting
 	 */
 	public async updateTimeRange(timeRange: '7d' | '30d' | '90d'): Promise<void> {
-		await this.storageManager.updateSettings({ defaultTimeRange: timeRange });
+		await this.analyticsEngine.updateSettings({ defaultTimeRange: timeRange });
 		await this.refreshAllData();
 	}
 
@@ -644,7 +643,7 @@ export class CopilotUsageHistoryModel {
 	 * Clear all usage data
 	 */
 	public async clearData(): Promise<{ deletedFiles: number; deletedEvents: number }> {
-		const result = await this.storageManager.clearStorage();
+		const result = await this.analyticsEngine.clearStorage();
 		await this.refreshAllData();
 		return result;
 	}
@@ -653,9 +652,9 @@ export class CopilotUsageHistoryModel {
 	 * Export usage data
 	 */
 	public async getExportData(): Promise<any> {
-		const settings = await this.storageManager.getSettings();
+		const settings = await this.analyticsEngine.getSettings();
 		const dateRange = this.getDateRangeForTimespan(settings.defaultTimeRange);
-		const events = await this.storageManager.getEventsForDateRange(dateRange);
+		const events = await this.analyticsEngine.getEventsForDateRange(dateRange);
 
 		return {
 			metadata: {
@@ -667,7 +666,7 @@ export class CopilotUsageHistoryModel {
 				}
 			},
 			events,
-			analytics: AnalyticsEngine.calculateAnalytics(events, { dateRange })
+			analytics: await this.analyticsEngine.calculateAnalytics(events, { dateRange })
 		};
 	}
 
@@ -690,7 +689,7 @@ export class CopilotUsageHistoryModel {
 		this.notifyListeners();
 
 		try {
-			const result = await this.storageManager.scanChatSessions();
+			const result = await this.analyticsEngine.scanChatSessions();
 
 			this.filterControls.scanProgress = {
 				isScanning: false,
@@ -784,10 +783,10 @@ export class CopilotUsageHistoryModel {
 	public dispose(): void {
 		// Remove callbacks
 		if (this._sessionEventsCallback) {
-			this.storageManager.removeSessionEventCallback(this._sessionEventsCallback);
+			this.analyticsEngine.removeSessionEventCallback(this._sessionEventsCallback);
 		}
 		if (this._logEntriesCallback) {
-			this.storageManager.removeLogEventCallback(this._logEntriesCallback);
+			this.analyticsEngine.removeLogEventCallback(this._logEntriesCallback);
 		}
 
 		// Clear listeners

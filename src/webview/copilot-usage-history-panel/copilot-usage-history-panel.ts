@@ -4,7 +4,7 @@
  */
 
 import * as vscode from 'vscode';
-import { UsageStorageManager } from '../../storage/usage-storage-manager';
+import { EnhancedAnalyticsEngine } from '../../storage/enhanced-analytics-engine';
 import { ILogger } from '../../types/logger';
 import { CopilotUsageHistoryModel } from './copilot-usage-history-model';
 import { CopilotUsageHistoryView } from './copilot-usage-history-view';
@@ -37,11 +37,11 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider, vsc
 		};
 
 		try {
-			// Initialize storage manager
-			const storageManager = new UsageStorageManager(this.context, this.logger);
+			// Initialize enhanced analytics engine
+			const analyticsEngine = new EnhancedAnalyticsEngine(this.context, this.logger);
 			
-			// Initialize model and view immediately (before storage is ready)
-			this._model = new CopilotUsageHistoryModel(storageManager, this.logger);
+			// Initialize model and view immediately (before analytics engine is ready)
+			this._model = new CopilotUsageHistoryModel(analyticsEngine, this.logger);
 			this._view = new CopilotUsageHistoryView(webviewView.webview, this._model, this.extensionUri, this.logger);
 
 			// Handle messages from the webview
@@ -53,8 +53,8 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider, vsc
 			// Render view immediately (will show loading/empty state)
 			await this._view.render();
 
-			// Initialize storage in background (non-blocking)
-			this.initializeStorageAsync(storageManager);
+			// Initialize analytics engine in background (non-blocking)
+			this.initializeAnalyticsAsync(analyticsEngine);
 
 		} catch (error) {
 			this.logger.error('Failed to initialize usage history panel:', error);
@@ -63,15 +63,15 @@ export class CopilotUsageHistoryPanel implements vscode.WebviewViewProvider, vsc
 	}
 
 	/**
-	 * Initialize storage asynchronously in the background
+	 * Initialize analytics engine asynchronously in the background
 	 */
-	private initializeStorageAsync(storageManager: UsageStorageManager): void {
+	private initializeAnalyticsAsync(analyticsEngine: EnhancedAnalyticsEngine): void {
 		// Fire and forget - don't await
-		storageManager.initialize().then(() => {
-			this.logger.info('Storage manager initialized successfully');
-			// Storage is ready, model will handle data loading
-		}).catch(error => {
-			this.logger.error('Storage manager initialization failed:', error);
+		analyticsEngine.initialize().then(() => {
+			this.logger.info('Enhanced analytics engine initialized successfully');
+			// Analytics engine is ready, model will handle data loading
+		}).catch((error: any) => {
+			this.logger.error('Enhanced analytics engine initialization failed:', error);
 			if (this._model) {
 				// Model should handle this error gracefully
 			}
