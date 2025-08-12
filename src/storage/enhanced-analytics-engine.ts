@@ -5,6 +5,7 @@
  */
 
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { CopilotUsageEvent, UsageStorageIndex, CopilotUsageSettings, DEFAULT_USAGE_SETTINGS, DateRange } from '../types/usage-events';
 import { UnifiedSessionDataService } from './unified-session-data-service';
 import { SessionScanStats } from '../types/chat-session';
@@ -16,14 +17,14 @@ import {
 	AnalyticsResult, 
 	AggregatedMetrics, 
 	TimeSeriesDataPoint, 
-	LanguageUsageMetric, 
 	ModelUsageMetric, 
 	EventTypeDistribution, 
 	HourlyDistribution, 
 	DayOfWeekDistribution, 
 	SessionAnalytics,
 	VSCodeSessionAnalytics,
-	WindowSessionAnalytics 
+	WindowSessionAnalytics,
+	LanguageUsageMetric
 } from '../types/analytics';
 
 interface CacheEntry<T> {
@@ -49,6 +50,7 @@ export class EnhancedAnalyticsEngine {
 
 	private context: vscode.ExtensionContext;
 	private unifiedDataService: UnifiedSessionDataService;
+	private logger: ILogger;
 	
 	// In-memory cache for computed analytics and events
 	private analyticsCache = new Map<string, CacheEntry<any>>();
@@ -60,6 +62,7 @@ export class EnhancedAnalyticsEngine {
 
 	constructor(context: vscode.ExtensionContext, logger: ILogger) {
 		this.context = context;
+		this.logger = logger;
 		
 		// Get the shared unified session data service from the service container
 		if (!ServiceContainer.isInitialized()) {
@@ -180,16 +183,16 @@ export class EnhancedAnalyticsEngine {
 		
 		const result: AnalyticsResult = {
 			query,
-			aggregatedMetrics: this.calculateAggregatedMetrics(filteredEvents),
-			timeSeriesData: this.calculateTimeSeriesData(filteredEvents, query.dateRange),
-			languageMetrics: this.calculateLanguageMetrics(filteredEvents),
-			modelMetrics: this.calculateModelMetrics(filteredEvents),
-			eventTypeDistribution: this.calculateEventTypeDistribution(filteredEvents),
-			hourlyDistribution: this.calculateHourlyDistribution(filteredEvents),
-			dayOfWeekDistribution: this.calculateDayOfWeekDistribution(filteredEvents),
-			sessionAnalytics: this.calculateSessionAnalytics(filteredEvents),
-			vscodeSessionAnalytics: this.calculateVSCodeSessionAnalytics(filteredEvents),
-			windowSessionAnalytics: this.calculateWindowSessionAnalytics(filteredEvents),
+			aggregatedMetrics: await this.calculateAggregatedMetrics(filteredEvents),
+			timeSeriesData: await this.calculateTimeSeriesData(filteredEvents, query.dateRange),
+			languageMetrics: await this.calculateLanguageMetrics(query.dateRange),
+			modelMetrics: await this.calculateModelMetrics(filteredEvents),
+			eventTypeDistribution: await this.calculateEventTypeDistribution(filteredEvents),
+			hourlyDistribution: await this.calculateHourlyDistribution(filteredEvents),
+			dayOfWeekDistribution: await this.calculateDayOfWeekDistribution(filteredEvents),
+			sessionAnalytics: await this.calculateSessionAnalytics(filteredEvents),
+			vscodeSessionAnalytics: await this.calculateVSCodeSessionAnalytics(filteredEvents),
+			windowSessionAnalytics: await this.calculateWindowSessionAnalytics(filteredEvents),
 			generatedAt: new Date().toISOString()
 		};
 		
@@ -230,16 +233,15 @@ export class EnhancedAnalyticsEngine {
 		const eventsThisMonth = events.filter(e => new Date(e.timestamp) >= thisMonth).length;
 
 		// Calculate average session duration
-		const sessionAnalytics = this.calculateSessionAnalytics(events);
+		const sessionAnalytics = await this.calculateSessionAnalytics(events);
 		const avgDuration = sessionAnalytics.length > 0 
-			? sessionAnalytics.reduce((sum, s) => sum + s.duration, 0) / sessionAnalytics.length
+			? await sessionAnalytics.reduce((sum, s) => sum + s.duration, 0) / sessionAnalytics.length
 			: 0;
 
 		// Get top language and model
-		const languageMetrics = this.calculateLanguageMetrics(events);
-		const modelMetrics = this.calculateModelMetrics(events);
+		const modelMetrics = await this.calculateModelMetrics(events);
 		
-		const topLanguage = languageMetrics.length > 0 ? languageMetrics[0].language : 'None';
+		const topLanguage = 'None';
 		const topModel = modelMetrics.length > 0 ? modelMetrics[0].model : 'None';
 
 		// Get last event time
@@ -448,11 +450,6 @@ export class EnhancedAnalyticsEngine {
 				return false;
 			}
 			
-			// Languages filter
-			if (query.languages && query.languages.length > 0 && (!event.language || !query.languages.includes(event.language))) {
-				return false;
-			}
-			
 			// Models filter
 			if (query.models && query.models.length > 0 && (!event.model || !query.models.includes(event.model))) {
 				return false;
@@ -467,11 +464,11 @@ export class EnhancedAnalyticsEngine {
 		});
 	}
 
-	private calculateAggregatedMetrics(events: CopilotUsageEvent[]): AggregatedMetrics {
+	private async calculateAggregatedMetrics(events: CopilotUsageEvent[]): Promise<AggregatedMetrics> {
 		const uniqueSessions = new Set(events.map(e => e.sessionId)).size;
 		const totalDuration = events.reduce((sum, e) => sum + (e.duration || 0), 0);
 		const totalTokens = events.reduce((sum, e) => sum + (e.tokensUsed || 0), 0);
-		
+
 		return {
 			totalEvents: events.length,
 			uniqueSessions,
@@ -483,7 +480,7 @@ export class EnhancedAnalyticsEngine {
 		};
 	}
 
-	private calculateTimeSeriesData(events: CopilotUsageEvent[], dateRange: DateRange): TimeSeriesDataPoint[] {
+	private async calculateTimeSeriesData(events: CopilotUsageEvent[], dateRange: DateRange): Promise<TimeSeriesDataPoint[]> {
 		const dataPoints: TimeSeriesDataPoint[] = [];
 		const dailyCounts = new Map<string, number>();
 		
@@ -513,46 +510,145 @@ export class EnhancedAnalyticsEngine {
 		return dataPoints;
 	}
 
-	private calculateLanguageMetrics(events: CopilotUsageEvent[]): LanguageUsageMetric[] {
-		const languageCounts = new Map<string, { count: number; totalDuration: number; totalTokens: number }>();
+	/**
+	 * Calculate language metrics from session data
+	 */
+	private async calculateLanguageMetrics(dateRange: DateRange): Promise<LanguageUsageMetric[]> {
+		let cacheKey = 'language-metrics';
 		
-		// Debug: Log language distribution for troubleshooting
-		const languageDebug = new Map<string, number>();
+		const start = new Date(dateRange.start);
+		const end = new Date(dateRange.end);
+		cacheKey += start.toISOString() + '-' + end.toISOString();
+		this.logger.info(`[Language Analytics] Cache miss for ${cacheKey}`);
+
+		// Check cache first
+		const cached = this.getCachedData(this.analyticsCache, cacheKey);
+		if (cached) {
+			return cached;
+		}
+
+		// Get raw session scan results from unified data service
+		const sessionScanResults = await this.unifiedDataService.getSessionScanResults();
 		
-		for (const event of events) {
-			const language = event.language || 'unknown';
-			const current = languageCounts.get(language) || { count: 0, totalDuration: 0, totalTokens: 0 };
+		// Track extensions and their counts
+		const extensionCounts = new Map<string, number>();
+		
+		// Process all sessions and requests
+		for (const scanResult of sessionScanResults) {
+
+			const session = scanResult.session;
 			
-			current.count++;
-			current.totalDuration += event.duration || 0;
-			current.totalTokens += event.tokensUsed || 0;
+			this.logger.debug(`[Language Analytics] Processing session ${session.sessionId} with ${session.requests.length} requests`);
 			
-			languageCounts.set(language, current);
-			
-			// Debug tracking
-			languageDebug.set(language, (languageDebug.get(language) || 0) + 1);
+			for (const request of session.requests) {
+				const requestTime = new Date(request.timestamp);
+				if(requestTime< start || requestTime > end) {continue;}
+
+				const requestContentRefs = request.contentReferences?.length || 0;
+				if (requestContentRefs > 0) {
+					this.logger.trace(`[Language Analytics] Request ${request.requestId} has ${requestContentRefs} content references`);
+				}
+				
+				// Extract file references from content references
+				const fileExtensions = this.extractFileExtensionsFromRequest(request);
+				
+				// Count each extension
+				for (const extension of fileExtensions) {
+					const currentCount = extensionCounts.get(extension) || 0;
+					extensionCounts.set(extension, currentCount + 1);
+				}
+			}
 		}
 		
-		// Log debug information about language detection
-		console.log('Language distribution debug:', Object.fromEntries(languageDebug));
-		if (languageDebug.get('unknown') === events.length) {
-			console.warn('All events have unknown language - language detection may need enhancement');
-		}
+		// Calculate total count for percentage calculation
+		const totalCount = Array.from(extensionCounts.values()).reduce((sum, count) => sum + count, 0);
 		
-		const totalEvents = events.length;
-		
-		return Array.from(languageCounts.entries())
-			.map(([language, data]) => ({
-				language,
-				eventCount: data.count,
-				percentage: totalEvents > 0 ? (data.count / totalEvents) * 100 : 0,
-				averageDuration: data.count > 0 ? data.totalDuration / data.count : 0,
-				totalTokens: data.totalTokens
+		// Convert to LanguageUsageMetric format
+		const languageMetrics: LanguageUsageMetric[] = Array.from(extensionCounts.entries())
+			.map(([extension, count]) => ({
+				language: extension,
+				eventCount: count,
+				percentage: totalCount > 0 ? (count / totalCount) * 100 : 0
 			}))
-			.sort((a, b) => b.eventCount - a.eventCount);
+			.sort((a, b) => b.eventCount - a.eventCount); // Sort by count descending
+		
+		// Log summary of what we found
+		this.logger.info(`[Language Analytics] Summary: Found ${totalCount} total file references across ${languageMetrics.length} different extensions`);
+		
+		// Special attention to .md files since you mentioned there are too many
+		const mdMetric = languageMetrics.find(m => m.language === '.md');
+		if (mdMetric) {
+			this.logger.warn(`[Language Analytics] .md files: ${mdMetric.eventCount} references (${mdMetric.percentage.toFixed(1)}% of total)`);
+		}
+		
+		// Log top 10 extensions for overview
+		const top10 = languageMetrics.slice(0, 10);
+		this.logger.debug(`[Language Analytics] Top extensions: ${top10.map(m => `${m.language}:${m.eventCount}`).join(', ')}`);
+		
+		// Cache the result
+		this.setCachedData(this.analyticsCache, cacheKey, languageMetrics);
+		
+		return languageMetrics;
 	}
 
-	private calculateModelMetrics(events: CopilotUsageEvent[]): ModelUsageMetric[] {
+	/**
+	 * Extract file extensions from a chat request's content references
+	 */
+	private extractFileExtensionsFromRequest(request: any): string[] {
+		const extensions: string[] = [];
+		
+		// Process content references
+		if (request.variableData.variables && Array.isArray(request.variableData.variables)) {
+			for (const variable of request.variableData.variables) {
+
+				// Filter out names starting with "prompt:" (check the ref.name property)
+				// if (ref.name && typeof ref.name === 'string' && ref.name.startsWith('prompt:')) {
+				// 	continue;
+				// }
+                
+				if (variable.kind === 'file') {
+
+					// // Filter out vscode-userdata scheme references
+					// if (ref.reference.scheme === 'vscode-userdata') {
+					// 	continue;
+					// }
+					
+					// Get file path from various possible fields
+					const filePath = variable.value.uri?.external;
+					
+					if (filePath && typeof filePath === 'string') {
+						
+						// Extract extension
+						const extension = path.extname(filePath).toLowerCase();
+						
+						// If no extension, use empty string (as specified)
+						const finalExtension = extension || path.basename(filePath);
+						
+						// Enhanced logging to understand context, especially for .md files
+						if (finalExtension === '') {
+							this.logger.info('[Language Analytics] .md REFERENCE CONTEXT:');
+							this.logger.info(`  Name: ${variable.name || 'undefined'}`);
+							// this.logger.info(`  File: ${fileName}`);
+							this.logger.info(`  Full path: ${filePath}`);
+							this.logger.info(`  Scheme: ${variable.value.uri.scheme || 'undefined'}`);
+							this.logger.info(`  Reference kind: ${variable.kind || 'undefined'}`);
+							this.logger.info(`  Has range: ${variable.value.range ? 'yes' : 'no'}`);
+							if (variable.value.range) {
+								this.logger.info(`  Range: lines ${variable.value.range.startLineNumber}-${variable.value.range.endLineNumber}`);
+							}
+							this.logger.info(`  Request context: Session ${request.sessionId || 'unknown'}, Request ${request.requestId || 'unknown'}`);
+						}
+						
+						extensions.push(finalExtension);
+					}
+				}
+			}
+		}
+		
+		return extensions;
+	}
+
+	private async calculateModelMetrics(events: CopilotUsageEvent[]): Promise<ModelUsageMetric[]> {
 		const modelCounts = new Map<string, { count: number; totalDuration: number; totalTokens: number }>();
 		
 		for (const event of events) {
@@ -580,7 +676,7 @@ export class EnhancedAnalyticsEngine {
 			.sort((a, b) => b.eventCount - a.eventCount);
 	}
 
-	private calculateEventTypeDistribution(events: CopilotUsageEvent[]): EventTypeDistribution[] {
+	private async calculateEventTypeDistribution(events: CopilotUsageEvent[]): Promise<EventTypeDistribution[]> {
 		const typeCounts = new Map<string, number>();
 		
 		for (const event of events) {
@@ -599,7 +695,7 @@ export class EnhancedAnalyticsEngine {
 			.sort((a, b) => b.count - a.count);
 	}
 
-	private calculateHourlyDistribution(events: CopilotUsageEvent[]): HourlyDistribution[] {
+	private async calculateHourlyDistribution(events: CopilotUsageEvent[]): Promise<HourlyDistribution[]> {
 		const hourlyCounts = new Map<number, number>();
 		
 		// Initialize all hours
@@ -624,7 +720,7 @@ export class EnhancedAnalyticsEngine {
 			.sort((a, b) => a.hour - b.hour);
 	}
 
-	private calculateDayOfWeekDistribution(events: CopilotUsageEvent[]): DayOfWeekDistribution[] {
+	private async calculateDayOfWeekDistribution(events: CopilotUsageEvent[]): Promise<DayOfWeekDistribution[]> {
 		const dayOfWeekCounts = new Map<number, number>();
 		
 		// Initialize all days
@@ -650,7 +746,7 @@ export class EnhancedAnalyticsEngine {
 			.sort((a, b) => a.dayOfWeek - b.dayOfWeek);
 	}
 
-	private calculateSessionAnalytics(events: CopilotUsageEvent[]): SessionAnalytics[] {
+	private async calculateSessionAnalytics(events: CopilotUsageEvent[]): Promise<SessionAnalytics[]> {
 		const sessionMap = new Map<string, {
 			sessionId: string;
 			vscodeSessionId: string;
@@ -709,7 +805,7 @@ export class EnhancedAnalyticsEngine {
 		}).sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime());
 	}
 
-	private calculateVSCodeSessionAnalytics(events: CopilotUsageEvent[]): VSCodeSessionAnalytics[] {
+	private async calculateVSCodeSessionAnalytics(events: CopilotUsageEvent[]): Promise<VSCodeSessionAnalytics[]> {
 		const vscodeSessionMap = new Map<string, {
 			vscodeSessionId: string;
 			events: CopilotUsageEvent[];
@@ -772,7 +868,7 @@ export class EnhancedAnalyticsEngine {
 		}).sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime());
 	}
 
-	private calculateWindowSessionAnalytics(events: CopilotUsageEvent[]): WindowSessionAnalytics[] {
+	private async calculateWindowSessionAnalytics(events: CopilotUsageEvent[]): Promise<WindowSessionAnalytics[]> {
 		const windowSessionMap = new Map<string, {
 			vscodeSessionId: string;
 			windowId: string;
@@ -959,186 +1055,5 @@ export class EnhancedAnalyticsEngine {
 		this.sessionEventCallbacks = [];
 		this.logEventCallbacks = [];
 		this.unifiedDataService.dispose();
-	}
-
-	/**
-	 * Debug method: Analyze language detection issues
-	 * Returns detailed information about why languages might be showing as "unknown"
-	 */
-	async analyzeLanguageDetection(): Promise<{
-		totalEvents: number;
-		eventsWithLanguage: number;
-		eventsWithoutLanguage: number;
-		languageDistribution: Record<string, number>;
-		sampleEventsWithoutLanguage: Array<{
-			id: string;
-			timestamp: string;
-			type: string;
-			filePath?: string;
-			userPrompt?: string;
-			language?: string;
-			potentialLanguageFromFilePath?: string;
-			potentialLanguageFromPrompt?: string;
-		}>;
-		detectionIssues: {
-			eventsWithFilePathButNoLanguage: number;
-			eventsWithPromptButNoLanguage: number;
-			eventsWithNeitherFilePathNorPrompt: number;
-		};
-	}> {
-		const allEvents = await this.getAllEvents();
-		const eventsWithLanguage = allEvents.filter(e => e.language && e.language !== 'unknown');
-		const eventsWithoutLanguage = allEvents.filter(e => !e.language || e.language === 'unknown');
-		
-		const languageDistribution: Record<string, number> = {};
-		allEvents.forEach(event => {
-			const lang = event.language || 'unknown';
-			languageDistribution[lang] = (languageDistribution[lang] || 0) + 1;
-		});
-		
-		// Analyze detection issues
-		let eventsWithFilePathButNoLanguage = 0;
-		let eventsWithPromptButNoLanguage = 0;
-		let eventsWithNeitherFilePathNorPrompt = 0;
-		
-		const sampleEventsWithoutLanguage = eventsWithoutLanguage.slice(0, 10).map(event => {
-			// Try to detect what language this should have been
-			let potentialLanguageFromFilePath: string | undefined;
-			let potentialLanguageFromPrompt: string | undefined;
-			
-			if (event.filePath) {
-				potentialLanguageFromFilePath = this.detectLanguageFromFilePath(event.filePath);
-				if (!potentialLanguageFromFilePath) {
-					eventsWithFilePathButNoLanguage++;
-				}
-			}
-			
-			if (event.userPrompt) {
-				potentialLanguageFromPrompt = this.detectLanguageFromPromptContent(event.userPrompt);
-				if (!potentialLanguageFromPrompt) {
-					eventsWithPromptButNoLanguage++;
-				}
-			}
-			
-			if (!event.filePath && !event.userPrompt) {
-				eventsWithNeitherFilePathNorPrompt++;
-			}
-			
-			return {
-				id: event.id,
-				timestamp: event.timestamp,
-				type: event.type,
-				filePath: event.filePath,
-				userPrompt: event.userPrompt ? event.userPrompt.substring(0, 150) + '...' : undefined,
-				language: event.language,
-				potentialLanguageFromFilePath,
-				potentialLanguageFromPrompt
-			};
-		});
-		
-		return {
-			totalEvents: allEvents.length,
-			eventsWithLanguage: eventsWithLanguage.length,
-			eventsWithoutLanguage: eventsWithoutLanguage.length,
-			languageDistribution,
-			sampleEventsWithoutLanguage,
-			detectionIssues: {
-				eventsWithFilePathButNoLanguage,
-				eventsWithPromptButNoLanguage,
-				eventsWithNeitherFilePathNorPrompt
-			}
-		};
-	}
-
-	/**
-	 * Helper method to detect language from file path
-	 */
-	private detectLanguageFromFilePath(filePath: string): string | undefined {
-		if (!filePath) {
-			return undefined;
-		}
-		
-		const ext = filePath.split('.').pop()?.toLowerCase();
-		if (!ext) {
-			return undefined;
-		}
-		
-		const languageMap: Record<string, string> = {
-			'ts': 'typescript',
-			'tsx': 'typescript',
-			'js': 'javascript',
-			'jsx': 'javascript',
-			'mjs': 'javascript',
-			'py': 'python',
-			'pyw': 'python',
-			'java': 'java',
-			'cs': 'csharp',
-			'cpp': 'cpp',
-			'cxx': 'cpp',
-			'cc': 'cpp',
-			'c': 'c',
-			'h': 'c',
-			'hpp': 'cpp',
-			'go': 'go',
-			'rs': 'rust',
-			'php': 'php',
-			'rb': 'ruby',
-			'swift': 'swift',
-			'kt': 'kotlin',
-			'scala': 'scala',
-			'sql': 'sql',
-			'html': 'html',
-			'htm': 'html',
-			'css': 'css',
-			'scss': 'scss',
-			'sass': 'scss',
-			'json': 'json',
-			'xml': 'xml',
-			'md': 'markdown',
-			'yml': 'yaml',
-			'yaml': 'yaml',
-			'sh': 'bash',
-			'bash': 'bash',
-			'zsh': 'bash',
-			'ps1': 'powershell',
-			'vue': 'vue',
-			'svelte': 'svelte'
-		};
-		
-		return languageMap[ext];
-	}
-
-	/**
-	 * Helper method to detect language from prompt content
-	 */
-	private detectLanguageFromPromptContent(prompt: string): string | undefined {
-		if (!prompt) {
-			return undefined;
-		}
-		
-		const text = prompt.toLowerCase();
-		
-		// Look for language-specific keywords or patterns
-		const languagePatterns: Record<string, RegExp[]> = {
-			'typescript': [/\btypescript\b/, /\b\.ts\b/, /\binterface\b/, /\btype\s+\w+\s*=/, /\bas\s+\w+/],
-			'javascript': [/\bjavascript\b/, /\b\.js\b/, /\bconst\s+\w+\s*=/, /\bfunction\s*\(/, /\b=>\s*/],
-			'python': [/\bpython\b/, /\b\.py\b/, /\bdef\s+\w+\s*\(/, /\bimport\s+\w+/, /\bfrom\s+\w+\s+import/],
-			'java': [/\bjava\b/, /\b\.java\b/, /\bpublic\s+class/, /\bpublic\s+static\s+void\s+main/],
-			'csharp': [/\bc#\b/, /\bcsharp\b/, /\b\.cs\b/, /\bpublic\s+class/, /\busing\s+System/],
-			'go': [/\bgolang\b/, /\b\.go\b/, /\bfunc\s+\w+\s*\(/, /\bpackage\s+main/],
-			'rust': [/\brust\b/, /\b\.rs\b/, /\bfn\s+\w+\s*\(/, /\blet\s+mut/],
-			'sql': [/\bsql\b/, /\bselect\s+/, /\bfrom\s+\w+/, /\bwhere\s+/, /\binsert\s+into/],
-			'html': [/\bhtml\b/, /\b<\/?\w+/, /\b\.html\b/],
-			'css': [/\bcss\b/, /\b\.css\b/, /\{\s*\w+\s*:/, /\bcolor\s*:/],
-			'markdown': [/\bmarkdown\b/, /\b\.md\b/, /\b#+\s/, /\[.*\]\(.*\)/]
-		};
-		
-		for (const [language, patterns] of Object.entries(languagePatterns)) {
-			if (patterns.some(pattern => pattern.test(text))) {
-				return language;
-			}
-		}
-		
-		return undefined;
 	}
 }

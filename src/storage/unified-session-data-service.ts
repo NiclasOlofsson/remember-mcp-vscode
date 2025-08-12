@@ -356,6 +356,15 @@ export class UnifiedSessionDataService {
 	}
 
 	/**
+	 * Get raw session scan results (for analytics that need access to original session data)
+	 */
+	async getSessionScanResults(): Promise<SessionScanResult[]> {
+		// Scan all sessions and return the raw results
+		const { results } = await this.sessionScanner.scanAllSessions();
+		return results;
+	}
+
+	/**
      * Clean up resources
      */
 	dispose(): void {

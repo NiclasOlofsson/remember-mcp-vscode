@@ -1,6 +1,16 @@
 /**
  * Session Data Transformer - Converts chat session data to CopilotUsageEvent format
- * Bridges between session files and existing storage/analytics infrastructure
+ * 
+ * CRITICAL: This class is ONLY a data mapper from JSON to object model.
+ * 
+ * RULES:
+ * - NO FILTERING of any kind (no vscode-userdata, no prompt:, nothing)
+ * - NO MAPPING of extensions to languages (keep .ts as .ts, .py as .py)
+ * - NO BUSINESS LOGIC - just extract raw data from JSON
+ * - The analytics layer handles filtering and aggregation logic
+ * 
+ * This transformer's job is ONLY to extract data and populate the object model.
+ * All filtering, mapping, and business logic belongs in the analytics layer.
  */
 
 import * as path from 'path';
@@ -85,9 +95,6 @@ export class SessionDataTransformer {
 		// Determine event type based on context
 		const eventType = this.determineEventType(request);
         
-		// Extract language context (if available from content references)
-		const language = this.extractLanguageContext(request);
-        
 		const event: CopilotUsageEvent = {
 			id,
 			timestamp: new Date(request.timestamp).toISOString(), // Convert unix timestamp to ISO string
@@ -107,7 +114,6 @@ export class SessionDataTransformer {
 			model: request.modelId,
             
 			// Context
-			language,
 			filePath: this.extractMainFilePath(request),
 			userPrompt: this.shouldIncludePrompt() ? request.message.text : undefined,
             
@@ -139,10 +145,10 @@ export class SessionDataTransformer {
 		const averageResponseTime = requests.length > 0 ? totalResponseTime / requests.length : 0;
         
 		// Extract unique languages and models
-		const languagesUsed = Array.from(new Set(
-			requests.map(r => this.extractLanguageContext(r))
-				.filter(lang => lang)
-		)) as string[];
+		// const languagesUsed = Array.from(new Set(
+		// 	requests.map(r => this.extractLanguageContext(r))
+		// 		.filter(lang => lang)
+		// )) as string[];
         
 		const modelsUsed = Array.from(new Set(
 			requests.map(r => r.modelId)
@@ -168,7 +174,7 @@ export class SessionDataTransformer {
 			requestCount: requests.length,
 			totalResponseLength,
 			averageResponseTime,
-			languagesUsed,
+			languagesUsed: [], // Languages are not available in session files
 			modelsUsed,
 			hasCodeCitations,
 			hasContentReferences,
@@ -297,236 +303,6 @@ export class SessionDataTransformer {
 	}
 
 	/**
-     * Extract language context from content references
-     */
-	private extractLanguageContext(request: CopilotChatRequest): string | undefined {
-		// Debug: Log what we're working with
-		this.logger.trace(`Extracting language context for request ${request.requestId}`);
-		this.logger.trace(`Content references count: ${request.contentReferences?.length || 0}`);
-		
-		// 1. Try content references first (current method)
-		if (request.contentReferences && request.contentReferences.length > 0) {
-			for (const ref of request.contentReferences) {
-				this.logger.trace('Processing content reference:', ref);
-				
-				// Get file path from multiple possible fields (VS Code stores the path in different ways)
-				let filePath: string | undefined;
-				
-				if (ref.reference?.uri && typeof ref.reference.uri === 'string') {
-					filePath = ref.reference.uri;
-					this.logger.trace(`Using URI field: ${filePath}`);
-				} else if (ref.reference?.fsPath && typeof ref.reference.fsPath === 'string') {
-					filePath = ref.reference.fsPath;
-					this.logger.trace(`Using fsPath field: ${filePath}`);
-				} else if (ref.reference?.path && typeof ref.reference.path === 'string') {
-					filePath = ref.reference.path;
-					this.logger.trace(`Using path field: ${filePath}`);
-				} else if (ref.reference?.external && typeof ref.reference.external === 'string') {
-					filePath = ref.reference.external;
-					this.logger.trace(`Using external field: ${filePath}`);
-				} else {
-					this.logger.trace('Content reference has no usable file path field');
-					continue;
-				}
-				
-				// Skip if no valid file path found
-				if (!filePath) {
-					this.logger.trace('No valid file path found in content reference');
-					continue;
-				}
-				
-				// Extract extension and map to language
-				const ext = path.extname(filePath).toLowerCase();
-				this.logger.trace(`Extracted extension: ${ext} from ${filePath}`);
-				
-				const language = this.mapExtensionToLanguage(ext);
-				if (language) {
-					this.logger.trace(`Mapped extension ${ext} to language: ${language}`);
-					return language;
-				} else {
-					this.logger.trace(`No language mapping found for extension: ${ext}`);
-				}
-			}
-		}
-		
-		// 2. Try variableData if no language found from content references
-		if (request.variableData?.variables) {
-			this.logger.trace('Checking variableData.variables for file information');
-			const languageFromVariables = this.extractLanguageFromVariables(request.variableData.variables);
-			if (languageFromVariables) {
-				this.logger.trace(`Detected language from variables: ${languageFromVariables}`);
-				return languageFromVariables;
-			}
-		}
-		
-		// 3. Try message parts if still no language found
-		if (request.message?.parts) {
-			this.logger.trace('Checking message.parts for file information');
-			const languageFromParts = this.extractLanguageFromMessageParts(request.message.parts);
-			if (languageFromParts) {
-				this.logger.trace(`Detected language from message parts: ${languageFromParts}`);
-				return languageFromParts;
-			}
-		}
-		
-		// 4. Fallback: Try to detect language from message content
-		const messageLanguage = this.detectLanguageFromMessage(request.message.text);
-		if (messageLanguage) {
-			this.logger.trace(`Fallback: Detected language from message content: ${messageLanguage}`);
-			return messageLanguage;
-		}
-        
-		this.logger.trace(`No language detected for request ${request.requestId}`);
-		return undefined;
-	}
-
-	/**
-	 * Map file extension to language
-	 */
-	private mapExtensionToLanguage(ext: string): string | undefined {
-		const languageMap: Record<string, string> = {
-			'.ts': 'typescript',
-			'.tsx': 'typescript',
-			'.js': 'javascript',
-			'.jsx': 'javascript',
-			'.mjs': 'javascript',
-			'.py': 'python',
-			'.pyw': 'python',
-			'.java': 'java',
-			'.cs': 'csharp',
-			'.cpp': 'cpp',
-			'.cxx': 'cpp',
-			'.cc': 'cpp',
-			'.c': 'c',
-			'.h': 'c',
-			'.hpp': 'cpp',
-			'.go': 'go',
-			'.rs': 'rust',
-			'.php': 'php',
-			'.rb': 'ruby',
-			'.swift': 'swift',
-			'.kt': 'kotlin',
-			'.scala': 'scala',
-			'.sql': 'sql',
-			'.html': 'html',
-			'.htm': 'html',
-			'.css': 'css',
-			'.scss': 'scss',
-			'.sass': 'scss',
-			'.json': 'json',
-			'.xml': 'xml',
-			'.md': 'markdown',
-			'.yml': 'yaml',
-			'.yaml': 'yaml',
-			'.sh': 'bash',
-			'.bash': 'bash',
-			'.zsh': 'bash',
-			'.ps1': 'powershell',
-			'.vue': 'vue',
-			'.svelte': 'svelte'
-		};
-		
-		return languageMap[ext];
-	}
-
-	/**
-	 * Extract language from variable data
-	 */
-	private extractLanguageFromVariables(variables: any[]): string | undefined {
-		for (const variable of variables) {
-			// Check if variable has file path information
-			if (variable.reference?.uri) {
-				const ext = path.extname(variable.reference.uri).toLowerCase();
-				const language = this.mapExtensionToLanguage(ext);
-				if (language) {
-					return language;
-				}
-			}
-			if (variable.reference?.fsPath) {
-				const ext = path.extname(variable.reference.fsPath).toLowerCase();
-				const language = this.mapExtensionToLanguage(ext);
-				if (language) {
-					return language;
-				}
-			}
-		}
-		return undefined;
-	}
-
-	/**
-	 * Extract language from message parts
-	 */
-	private extractLanguageFromMessageParts(parts: any[]): string | undefined {
-		for (const part of parts) {
-			// Check if part has file reference
-			if (part.references) {
-				for (const ref of part.references) {
-					if (ref.uri) {
-						const ext = path.extname(ref.uri).toLowerCase();
-						const language = this.mapExtensionToLanguage(ext);
-						if (language) {
-							return language;
-						}
-					}
-					if (ref.fsPath) {
-						const ext = path.extname(ref.fsPath).toLowerCase();
-						const language = this.mapExtensionToLanguage(ext);
-						if (language) {
-							return language;
-						}
-					}
-				}
-			}
-			// Check if part text contains file paths
-			if (part.text && typeof part.text === 'string') {
-				const filePathMatch = part.text.match(/(['"`])([^'"`]*\.\w+)\1/);
-				if (filePathMatch) {
-					const ext = path.extname(filePathMatch[2]).toLowerCase();
-					const language = this.mapExtensionToLanguage(ext);
-					if (language) {
-						return language;
-					}
-				}
-			}
-		}
-		return undefined;
-	}
-
-	/**
-	 * Fallback language detection from message content
-	 */
-	private detectLanguageFromMessage(messageText: string): string | undefined {
-		if (!messageText) {
-			return undefined;
-		}
-		
-		const text = messageText.toLowerCase();
-		
-		// Look for language-specific keywords or patterns
-		const languagePatterns: Record<string, RegExp[]> = {
-			'typescript': [/\btypescript\b/, /\b\.ts\b/, /\binterface\b/, /\btype\s+\w+\s*=/, /\bas\s+\w+/],
-			'javascript': [/\bjavascript\b/, /\b\.js\b/, /\bconst\s+\w+\s*=/, /\bfunction\s*\(/, /\b=>\s*/],
-			'python': [/\bpython\b/, /\b\.py\b/, /\bdef\s+\w+\s*\(/, /\bimport\s+\w+/, /\bfrom\s+\w+\s+import/],
-			'java': [/\bjava\b/, /\b\.java\b/, /\bpublic\s+class/, /\bpublic\s+static\s+void\s+main/],
-			'csharp': [/\bc#\b/, /\bcsharp\b/, /\b\.cs\b/, /\bpublic\s+class/, /\busing\s+System/],
-			'go': [/\bgolang\b/, /\b\.go\b/, /\bfunc\s+\w+\s*\(/, /\bpackage\s+main/],
-			'rust': [/\brust\b/, /\b\.rs\b/, /\bfn\s+\w+\s*\(/, /\blet\s+mut/],
-			'sql': [/\bsql\b/, /\bselect\s+/, /\bfrom\s+\w+/, /\bwhere\s+/, /\binsert\s+into/],
-			'html': [/\bhtml\b/, /\b<\/?\w+/, /\b\.html\b/],
-			'css': [/\bcss\b/, /\b\.css\b/, /\{\s*\w+\s*:/, /\bcolor\s*:/],
-			'markdown': [/\bmarkdown\b/, /\b\.md\b/, /\b#+\s/, /\[.*\]\(.*\)/]
-		};
-		
-		for (const [language, patterns] of Object.entries(languagePatterns)) {
-			if (patterns.some(pattern => pattern.test(text))) {
-				return language;
-			}
-		}
-		
-		return undefined;
-	}
-
-	/**
      * Extract the main file path from content references
      */
 	private extractMainFilePath(request: CopilotChatRequest): string | undefined {
@@ -534,20 +310,19 @@ export class SessionDataTransformer {
 			return undefined;
 		}
         
-		// Return the first content reference file path (anonymized)
-		const firstRef = request.contentReferences[0];
-		if (firstRef.reference) {
+		// Find the first non-instruction file (skip vscode-userdata scheme files)
+		for (const ref of request.contentReferences) {
 			// Get file path from multiple possible fields (VS Code stores the path in different ways)
 			let filePath: string | undefined;
 			
-			if (firstRef.reference.uri && typeof firstRef.reference.uri === 'string') {
-				filePath = firstRef.reference.uri;
-			} else if (firstRef.reference.fsPath && typeof firstRef.reference.fsPath === 'string') {
-				filePath = firstRef.reference.fsPath;
-			} else if (firstRef.reference.path && typeof firstRef.reference.path === 'string') {
-				filePath = firstRef.reference.path;
-			} else if (firstRef.reference.external && typeof firstRef.reference.external === 'string') {
-				filePath = firstRef.reference.external;
+			if (ref.reference.uri && typeof ref.reference.uri === 'string') {
+				filePath = ref.reference.uri;
+			} else if (ref.reference.fsPath && typeof ref.reference.fsPath === 'string') {
+				filePath = ref.reference.fsPath;
+			} else if (ref.reference.path && typeof ref.reference.path === 'string') {
+				filePath = ref.reference.path;
+			} else if (ref.reference.external && typeof ref.reference.external === 'string') {
+				filePath = ref.reference.external;
 			}
 			
 			if (filePath) {
@@ -580,7 +355,7 @@ export class SessionDataTransformer {
 	private shouldIncludePrompt(): boolean {
 		// This would typically check a privacy setting
 		// For now, default to not including prompts for privacy
-		return false;
+		return true;
 	}
 }
 
