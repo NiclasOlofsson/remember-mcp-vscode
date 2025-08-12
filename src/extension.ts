@@ -498,7 +498,6 @@ export function activate(context: vscode.ExtensionContext) {
 
 			if (result === 'Yes, Clear All') {
 				await usageHistoryPanelProvider.clearStorage();
-				await vscode.commands.executeCommand('setContext', 'remember-mcp.hasUsageData', false);
 				vscode.window.showInformationMessage('Copilot usage history cleared successfully.');
 			}
 		} catch (error) {
@@ -509,10 +508,9 @@ export function activate(context: vscode.ExtensionContext) {
 	const scanChatSessionsCommand = vscode.commands.registerCommand('remember-mcp.scanChatSessions', async () => {
 		try {
 			// Check if we already have data
-			const storageStats = await usageHistoryPanelProvider.getStorageStats();
-			if (storageStats.totalEvents > 0) {
+			if (usageHistoryPanelProvider.hasData()) {
 				const result = await vscode.window.showWarningMessage(
-					`You already have ${storageStats.totalEvents} usage events. Scanning will add any new events found.`,
+					'You already have usage data. Scanning will add any new events found.',
 					'Continue Scanning',
 					'Cancel'
 				);
@@ -522,7 +520,6 @@ export function activate(context: vscode.ExtensionContext) {
 			}
 
 			await usageHistoryPanelProvider.scanChatSessions();
-			await vscode.commands.executeCommand('setContext', 'remember-mcp.hasUsageData', true);
 		} catch (error) {
 			vscode.window.showErrorMessage(`Failed to scan chat sessions: ${error}`);
 		}
@@ -531,8 +528,7 @@ export function activate(context: vscode.ExtensionContext) {
 	const exportUsageDataCommand = vscode.commands.registerCommand('remember-mcp.exportUsageData', async () => {
 		try {
 			// Check if we have data to export
-			const storageStats = await usageHistoryPanelProvider.getStorageStats();
-			if (storageStats.totalEvents === 0) {
+			if (!usageHistoryPanelProvider.hasData()) {
 				vscode.window.showInformationMessage('No usage data to export. Use the Scan button to collect data first.');
 				return;
 			}

@@ -108,17 +108,17 @@
       "view/title": [
         {
           "command": "remember-mcp.scanChatSessions",
-          "when": "view == copilot-usage-history-panel",
+          "when": "view == copilot-usage-history-panel && remember-mcp.hasUsageData",
           "group": "navigation@1"
         },
         {
           "command": "remember-mcp.exportUsageData",
-          "when": "view == copilot-usage-history-panel",
+          "when": "view == copilot-usage-history-panel && remember-mcp.hasUsageData",
           "group": "navigation@2"
         },
         {
           "command": "remember-mcp.clearUsageHistory",
-          "when": "view == copilot-usage-history-panel",
+          "when": "view == copilot-usage-history-panel && remember-mcp.hasUsageData",
           "group": "navigation@3"
         }
       ]
